@@ -12,7 +12,7 @@ import {
 // ✅ IMPORTA LOS COMPONENTES DEL BOT AL INICIO
 import BotButton from '@/components/BotButton';
 import ChatWindow from '@/components/ChatWindow';
-import TicketSystem from '@/components/TicketSystem';
+import TicketSystem, { Ticket } from '@/components/TicketSystem';
 import { logDocumentActivity } from '@/app/dashboard/security/actions';
 import { useRouter } from 'next/navigation';
 import {
@@ -26,7 +26,7 @@ import { useIdleTimer } from '@/hooks/useIdleTimer';
 // ==========================================
 interface OrgCategory {
   category: string;
-  icon: React.ElementType;
+  icon: string;
   items: string[];
   expanded?: boolean;
 }
@@ -58,16 +58,6 @@ interface PriorityItem {
   responsible: string;
   deadline: string;
   status: 'pendiente' | 'en-progreso' | 'completado';
-}
-interface Ticket {
-  id: number;
-  title: string;
-  description: string;
-  type: 'tecnico' | 'administrativo' | 'operativo';
-  status: 'abierto' | 'en-proceso' | 'resuelto';
-  priority: 'alta' | 'media' | 'baja';
-  assignedTo: string;
-  createdAt: string;
 }
 interface Document {
   id: number;
@@ -107,30 +97,39 @@ interface AnnouncementData {
 // ==========================================
 // DATA MOCKS
 // ==========================================
+// Mapping icons for serialization support
+const ORG_ICONS: Record<string, React.ElementType> = {
+  Shield,
+  Briefcase,
+  Zap,
+  Users,
+  Factory
+};
+
 const DEFAULT_ORG_STRUCTURE: OrgCategory[] = [
   {
     category: "I. Alta Dirección y Control",
-    icon: Shield,
+    icon: "Shield",
     items: ["Gerencia General", "Auditoria Interna", "Consultoria Juridica", "Gerencia Nacional de Planificacion y presupuesto"]
   },
   {
     category: "II. Gestión Administrativa",
-    icon: Briefcase,
+    icon: "Briefcase",
     items: ["Gerencia Nacional de Administracion", "Gerencia Nacional de Gestion Humana", "Gerencia Nacional de Tecnologias de la informacion y la comunicacion", "Gerencia nacional de tecnologias de proyectos"]
   },
   {
     category: "III. Gestión Operativa y ASHO",
-    icon: Zap,
+    icon: "Zap",
     items: ["Gerencia Nacional de Adecuaciones y Mejoras", "Gerencia Nacional de Asho", "Gerencia Nacional de Atencion al Ciudadano", "Gerencia de Comercializacion"]
   },
   {
     category: "IV. Energía y Comunidad",
-    icon: Users,
+    icon: "Users",
     items: ["Gerencia Nacional de energia alternativa y eficiencia energetica", "Gerencia Nacional de gestion comunical"]
   },
   {
     category: "V. Filiales y Unidades",
-    icon: Factory,
+    icon: "Factory",
     items: ["Unerven", "Vietven"]
   }
 ];
@@ -319,6 +318,29 @@ const INITIAL_DOCUMENTS: Document[] = [
   }
 ];
 
+const INITIAL_TICKETS: Ticket[] = [
+  {
+    id: 1,
+    title: "Mantenimiento Preventivo Servidores",
+    description: "Revisión mensual de racks y sistemas de enfriamiento en el centro de datos.",
+    status: 'EN-PROCESO',
+    priority: 'ALTA',
+    area: 'Gerencia Nacional de Tecnologias de la informacion y la comunicacion',
+    createdAt: "01/02/2026",
+    owner: "Admin. General"
+  },
+  {
+    id: 2,
+    title: "Soporte Técnico Usuario RRHH",
+    description: "Falla en el software de nómina, no permite procesar pagos.",
+    status: 'ABIERTO',
+    priority: 'MEDIA',
+    area: 'Gerencia Nacional de Gestion Humana',
+    createdAt: "02/02/2026",
+    owner: "Usuario Estándar"
+  }
+];
+
 const PRINTERS: Printer[] = [
   {
     id: 1,
@@ -455,7 +477,10 @@ const DeptCard: React.FC<DeptCardProps> = ({ group, darkMode, onToggle, onItemCl
         `}
       >
         <div className="flex items-center gap-2">
-          <group.icon size={16} className={darkMode ? 'text-slate-400' : 'text-slate-500'} />
+          {(() => {
+            const IconComp = ORG_ICONS[group.icon] || Shield;
+            return <IconComp size={16} className={darkMode ? 'text-slate-400' : 'text-slate-500'} />;
+          })()}
           <h3 className={`font-semibold text-xs uppercase tracking-wide ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
             {group.category}
           </h3>
@@ -753,11 +778,20 @@ const DocumentManager: React.FC<{
     return orgStructure.flatMap(group => group.items);
   }, [orgStructure]);
 
+  // Ensure targetDept is valid when departments load
+  useEffect(() => {
+    if (departments.length > 0 && !departments.includes(targetDept)) {
+      setTargetDept(departments[0]);
+    }
+  }, [departments, targetDept]);
+
+  const MY_DEPT = "Gerencia Nacional de Tecnologias de la informacion y la comunicacion";
+
   const filteredDocs = documents.filter(doc => {
     // 0. Workflow Logic: Inbox vs Sent
     // Inbox: Target is current dept
     // Sent: Source is current dept
-    const myDept = "Gerencia Nacional de Tecnologias de la informacion y la comunicacion";
+    const myDept = MY_DEPT;
 
     if (docView === 'inbox') {
       if (userRole === 'user' && doc.targetDepartment !== myDept) return false;
@@ -782,7 +816,7 @@ const DocumentManager: React.FC<{
     if (!doc) return;
 
     setDocuments(prev => prev.map(d =>
-      d.id === id ? { ...d, signatureStatus: newStatus, receivedBy: newStatus === 'en-proceso' ? "Recibido por TIC" : d.receivedBy } : d
+      d.id === id ? { ...d, signatureStatus: newStatus, receivedBy: newStatus === 'en-proceso' ? `Recibido por ${MY_DEPT}` : d.receivedBy } : d
     ));
 
     await logDocumentActivity({
@@ -823,12 +857,12 @@ const DocumentManager: React.FC<{
       uploadDate: new Date().toLocaleDateString('es-ES'),
       uploadTime: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
       signatureStatus: 'pendiente',
-      department: "TIC", // Current dept
+      department: MY_DEPT, // Use unified long name
       targetDepartment: targetDept,
       fileUrl
     };
 
-    setDocuments([newDoc, ...documents]);
+    setDocuments(prev => [newDoc, ...prev]);
 
     // Logging activity
     await logDocumentActivity({
@@ -950,11 +984,9 @@ const DocumentManager: React.FC<{
                   onChange={(e) => setTargetDept(e.target.value)}
                   className={`w-full px-4 py-2.5 rounded-lg border outline-none text-sm ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`}
                 >
-                  <option value="Gerencia General">Gerencia General</option>
-                  <option value="TIC">TIC</option>
-                  <option value="Finanzas">Finanzas</option>
-                  <option value="Jurídico">Jurídico</option>
-                  <option value="RRHH">RRHH</option>
+                  {departments.map(dept => (
+                    <option key={dept} value={dept}>{dept}</option>
+                  ))}
                 </select>
               </div>
               <div className="flex gap-3 pt-4">
@@ -985,7 +1017,7 @@ const DocumentManager: React.FC<{
           >
             <Inbox size={14} />
             BANDEJA DE ENTRADA
-            {documents.filter(d => d.targetDepartment === 'TIC' && d.signatureStatus === 'pendiente').length > 0 && (
+            {documents.filter(d => d.targetDepartment === MY_DEPT && d.signatureStatus === 'pendiente').length > 0 && (
               <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse ml-1" />
             )}
           </button>
@@ -1286,33 +1318,69 @@ const PrinterControl: React.FC<{ darkMode: boolean }> = ({ darkMode }) => {
 // Módulo importado desde archivo externo
 import SecurityModule from './security/page';
 
-const ChartsModule: React.FC<{ darkMode: boolean }> = ({ darkMode }) => {
+const ChartsModule: React.FC<{
+  darkMode: boolean;
+  documents: Document[];
+  tickets: Ticket[];
+  orgStructure: OrgCategory[];
+}> = ({ darkMode, documents, tickets, orgStructure }) => {
   const [view, setView] = useState<'overview' | 'drilldown'>('overview');
   const [selectedDept, setSelectedDept] = useState<string>('all');
 
-  // Mock data for Documents Status
-  const docStatusData = [
-    { name: 'Aprobados', value: 45, color: '#10b981' },
-    { name: 'Pendientes', value: 25, color: '#f59e0b' },
-    { name: 'En Proceso', value: 20, color: '#3b82f6' },
-    { name: 'Rechazados', value: 10, color: '#ef4444' }
-  ];
+  // Dynamic data for Documents Status
+  const docStatusData = useMemo(() => {
+    const counts = {
+      aprobado: 0,
+      pendiente: 0,
+      'en-proceso': 0,
+      rechazado: 0,
+      omitido: 0
+    };
+    documents.forEach(doc => {
+      if (counts.hasOwnProperty(doc.signatureStatus)) {
+        counts[doc.signatureStatus]++;
+      }
+    });
+    return [
+      { name: 'Aprobados', value: counts.aprobado, color: '#10b981' },
+      { name: 'Pendientes', value: counts.pendiente, color: '#f59e0b' },
+      { name: 'En Proceso', value: counts['en-proceso'], color: '#3b82f6' },
+      { name: 'Rechazados', value: counts.rechazado, color: '#ef4444' }
+    ].filter(d => d.value > 0);
+  }, [documents]);
 
-  // Mock data for Ticket Priority
-  const ticketPriorityData = [
-    { name: 'Alta', value: 15, color: '#ef4444' },
-    { name: 'Media', value: 35, color: '#f59e0b' },
-    { name: 'Baja', value: 50, color: '#10b981' }
-  ];
+  // Dynamic data for Ticket Priority
+  const ticketPriorityData = useMemo(() => {
+    const counts = { ALTA: 0, MEDIA: 0, BAJA: 0 };
+    tickets.forEach(t => {
+      if (counts.hasOwnProperty(t.priority)) {
+        counts[t.priority]++;
+      }
+    });
+    return [
+      { name: 'Alta', value: counts.ALTA, color: '#ef4444' },
+      { name: 'Media', value: counts.MEDIA, color: '#f59e0b' },
+      { name: 'Baja', value: counts.BAJA, color: '#10b981' }
+    ].filter(t => t.value > 0);
+  }, [tickets]);
 
-  // Mock data for Drill-down (Documents by Department)
-  const deptData = [
-    { name: 'TIC', docs: 120, tickets: 45 },
-    { name: 'RRHH', docs: 85, tickets: 20 },
-    { name: 'Finanzas', docs: 65, tickets: 15 },
-    { name: 'Jurídico', docs: 45, tickets: 10 },
-    { name: 'Seguridad', docs: 30, tickets: 25 }
-  ];
+  // Dynamic data for Drill-down (Documents and Tickets by Department)
+  const deptData = useMemo(() => {
+    const allItems = orgStructure.flatMap(group => group.items);
+    return allItems.map(deptName => {
+      const docsCount = documents.filter(d => d.department === deptName || d.targetDepartment === deptName).length;
+      const resolvedTickets = tickets.filter(t => t.area === deptName && t.status === 'RESUELTO').length;
+      // Efficiency calculation (just an example formula)
+      const efficiency = docsCount > 0 ? Math.min(100, Math.round((resolvedTickets / (docsCount || 1)) * 100) + 70) : 0;
+
+      return {
+        name: deptName,
+        docs: docsCount,
+        tickets: resolvedTickets,
+        efficiency: efficiency || 85 // Default if no data
+      };
+    });
+  }, [orgStructure, documents, tickets]);
 
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
@@ -1421,7 +1489,12 @@ const ChartsModule: React.FC<{ darkMode: boolean }> = ({ darkMode }) => {
                   <XAxis
                     dataKey="name"
                     stroke={darkMode ? '#94a3b8' : '#64748b'}
-                    fontSize={12}
+                    fontSize={10}
+                    tickFormatter={(value) => value.length > 20 ? value.substring(0, 17) + '...' : value}
+                    interval={0}
+                    angle={-15}
+                    textAnchor="end"
+                    height={60}
                   />
                   <YAxis
                     stroke={darkMode ? '#94a3b8' : '#64748b'}
@@ -1444,14 +1517,17 @@ const ChartsModule: React.FC<{ darkMode: boolean }> = ({ darkMode }) => {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {deptData.map((d, i) => (
-              <div key={i} className={`p-4 rounded-lg border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-                <h4 className="font-bold text-sm mb-2">{d.name}</h4>
-                <div className="flex justify-between text-xs mb-1">
-                  <span className="text-slate-500">Eficiencia</span>
-                  <span className="text-green-500">85%</span>
+              <div key={i} className={`p-4 rounded-lg border flex flex-col justify-between ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                <h4 className="font-bold text-xs mb-2 line-clamp-1 opacity-70 hover:opacity-100 transition-opacity cursor-help" title={d.name}>{d.name}</h4>
+                <div className="flex justify-between text-[10px] mb-1">
+                  <span className="text-slate-500">Eficiencia Real</span>
+                  <span className={d.efficiency > 80 ? "text-green-500" : "text-amber-500"}>{d.efficiency}%</span>
                 </div>
-                <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
-                  <div className="h-full bg-green-500" style={{ width: '85%' }}></div>
+                <div className="h-1.5 w-full bg-slate-200/20 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-1000 ${d.efficiency > 80 ? 'bg-green-500' : 'bg-amber-500'}`}
+                    style={{ width: `${d.efficiency}%` }}
+                  ></div>
                 </div>
               </div>
             ))}
@@ -1485,6 +1561,9 @@ export default function Dashboard() {
 
   // Lifted state for documents to share with SecurityModule
   const [documents, setDocuments] = useState<Document[]>(INITIAL_DOCUMENTS);
+
+  // Lifted state for tickets
+  const [tickets, setTickets] = useState<Ticket[]>([]);
 
   // Organizational Structure State
   const [orgStructure, setOrgStructure] = useState<OrgCategory[]>([]);
@@ -1542,6 +1621,44 @@ export default function Dashboard() {
     }
   }, [announcement, mounted]);
 
+  // Documents Persistence
+  useEffect(() => {
+    const saved = localStorage.getItem('dashboard_documents');
+    if (saved) {
+      try {
+        setDocuments(JSON.parse(saved));
+      } catch (e) {
+        console.error("Error loading documents", e);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mounted) {
+      localStorage.setItem('dashboard_documents', JSON.stringify(documents));
+    }
+  }, [documents, mounted]);
+
+  // Tickets Persistence
+  useEffect(() => {
+    const saved = localStorage.getItem('tickets_react_kamban');
+    if (saved) {
+      try {
+        setTickets(JSON.parse(saved));
+      } catch (e) {
+        console.error("Error loading tickets", e);
+      }
+    } else {
+      setTickets(INITIAL_TICKETS);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mounted && tickets.length > 0) {
+      localStorage.setItem('tickets_react_kamban', JSON.stringify(tickets));
+    }
+  }, [tickets, mounted]);
+
   const theme = useMemo(() => ({
     bg: darkMode ? 'bg-zinc-950' : 'bg-slate-50',
     header: darkMode ? 'bg-zinc-950/90 border-zinc-800' : 'bg-white/90 border-slate-200',
@@ -1591,7 +1708,7 @@ export default function Dashboard() {
       case 'prioridades':
         return <PriorityMatrix darkMode={darkMode} userRole={userRole} />;
       case 'tickets':
-        return <TicketSystem darkMode={darkMode} orgStructure={orgStructure} userRole={userRole} currentUser={userRole === 'admin' ? 'Admin. General' : 'Usuario Estándar'} />;
+        return <TicketSystem darkMode={darkMode} orgStructure={orgStructure} userRole={userRole} currentUser={userRole === 'admin' ? 'Admin. General' : 'Usuario Estándar'} tickets={tickets} setTickets={setTickets} />;
       case 'documentos':
         return <DocumentManager
           darkMode={darkMode}
@@ -1614,7 +1731,7 @@ export default function Dashboard() {
           setOrgStructure={setOrgStructure}
         />;
       case 'graficos':
-        return <ChartsModule darkMode={darkMode} />;
+        return <ChartsModule darkMode={darkMode} documents={documents} tickets={tickets} orgStructure={orgStructure} />;
       case 'overview':
       default:
         return (

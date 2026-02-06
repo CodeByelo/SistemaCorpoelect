@@ -1,8 +1,17 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Shield, Activity, Users, Lock, ChevronRight, ChevronLeft, Search, Download, Filter, FileText, Edit2, Trash2, Plus } from 'lucide-react';
+import { Shield, Activity, Users, Lock, ChevronRight, ChevronLeft, Search, Download, Filter, FileText, Edit2, Trash2, Plus, Briefcase, Zap, Factory } from 'lucide-react';
 import { getSecurityLogs, getUsersList } from './actions';
+
+// Mapping icons for serialization support
+const ORG_ICONS: Record<string, React.ElementType> = {
+    Shield,
+    Briefcase,
+    Zap,
+    Users,
+    Factory
+};
 
 interface SecurityModuleProps {
     darkMode: boolean;
@@ -536,7 +545,10 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                                     {orgStructure.map((group: any, groupIdx: number) => (
                                         <div key={groupIdx} className={`p-5 rounded-xl border shadow-sm ${theme.card}`}>
                                             <div className="flex items-center gap-2 mb-4 border-b pb-3 border-zinc-800/50">
-                                                <group.icon size={20} className="text-red-500" />
+                                                {(() => {
+                                                    const IconComp = ORG_ICONS[group.icon] || Shield;
+                                                    return <IconComp size={20} className="text-red-500" />;
+                                                })()}
                                                 <h4 className="font-bold text-sm tracking-tight">{group.category}</h4>
                                             </div>
                                             <div className="space-y-2">

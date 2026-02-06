@@ -9,7 +9,7 @@ type TicketStatus = 'ABIERTO' | 'EN-PROCESO' | 'RESUELTO';
 type TicketPriority = 'ALTA' | 'MEDIA' | 'BAJA';
 type TicketArea = string;
 
-interface Ticket {
+export interface Ticket {
     id: number;
     title: string;
     description: string;
@@ -21,26 +21,21 @@ interface Ticket {
     owner: string;
 }
 
-const INITIAL_DATA: Ticket[] = [
-    {
-        id: 1,
-        title: "Mantenimiento Preventivo Servidores",
-        description: "Revisión mensual de racks y sistemas de enfriamiento en el centro de datos.",
-        status: 'EN-PROCESO',
-        priority: 'ALTA',
-        area: 'Equipo TIC',
-        createdAt: "01/02/2026",
-        owner: "Admin. General"
-    }
-];
-
-export default function TicketSystem({ darkMode, orgStructure = [], currentUser = 'Admin. General', userRole = 'admin' }: {
+export default function TicketSystem({
+    darkMode,
+    orgStructure = [],
+    currentUser = 'Admin. General',
+    userRole = 'admin',
+    tickets = [],
+    setTickets
+}: {
     darkMode: boolean;
     orgStructure?: any[];
     currentUser?: string;
-    userRole?: 'admin' | 'user'
+    userRole?: 'admin' | 'user';
+    tickets?: Ticket[];
+    setTickets: React.Dispatch<React.SetStateAction<Ticket[]>>;
 }) {
-    const [tickets, setTickets] = useState<Ticket[]>([]);
     const [filterArea, setFilterArea] = useState<string>('all');
     const [filterPriority, setFilterPriority] = useState<string>('all');
     const [searchTerm, setSearchTerm] = useState('');
@@ -65,27 +60,12 @@ export default function TicketSystem({ darkMode, orgStructure = [], currentUser 
 
     const [newPriority, setNewPriority] = useState<TicketPriority>('MEDIA');
 
-    // Load persistence
+    // Close menu on click outside
     useEffect(() => {
-        const saved = localStorage.getItem('tickets_react_kamban');
-        if (saved) {
-            setTickets(JSON.parse(saved));
-        } else {
-            setTickets(INITIAL_DATA);
-        }
-
-        // Close menu on click outside
         const handleClickOutside = () => setMenuOpenId(null);
         window.addEventListener('click', handleClickOutside);
         return () => window.removeEventListener('click', handleClickOutside);
     }, []);
-
-    // Sync persistence
-    useEffect(() => {
-        if (tickets.length > 0) {
-            localStorage.setItem('tickets_react_kamban', JSON.stringify(tickets));
-        }
-    }, [tickets]);
 
     // Helper for logging
     const logAction = async (action: string, ticketTitle: string, status: 'success' | 'warning' | 'danger' | 'info' = 'success') => {
