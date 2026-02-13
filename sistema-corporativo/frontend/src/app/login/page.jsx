@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Shield, Zap, Lock, User, CheckCircle, AlertCircle, ChevronRight } from 'lucide-react';
-import { manejarLogin } from '../actions';
+import { useAuth } from '@/hooks/useAuth';
+// import { login } from '@/lib/api'; // Eliminado: Usaremos useAuth
 
 // ====================================================================
 // SPLASH SCREEN - CORPOEELEC INDUSTRIAL
@@ -207,7 +208,7 @@ const PasswordStrength = ({ password }) => {
 
 const AnimatedInput = ({
   id, label, value, onChange, type, placeholder, icon: Icon,
-  error, showError, autoComplete, required
+  error, showError, autoComplete, required, ...props
 }) => {
   const [isFocused, setIsFocused] = useState(false);
   const hasValue = value.length > 0;
@@ -243,7 +244,18 @@ const AnimatedInput = ({
           className="w-full px-4 py-4 bg-transparent text-white placeholder-gray-500/50 focus:outline-none"
         />
 
-        {value && !error && (
+        {/* Toggle Password Visibility Button */}
+        {id === 'password' && (
+          <button
+            type="button"
+            onClick={props.onTogglePassword}
+            className="pr-4 text-gray-500 hover:text-red-400 transition-colors focus:outline-none"
+          >
+            {type === 'password' ? <Eye size={18} /> : <EyeOff size={18} />}
+          </button>
+        )}
+
+        {value && !error && id !== 'password' && (
           <div className="pr-4 text-red-400">
             <CheckCircle size={18} />
           </div>
@@ -316,6 +328,9 @@ const Particles = () => {
   );
 };
 
+// ====================================================================
+// FORMULARIO PRINCIPAL
+// ====================================================================
 const LoginCorpoelecForm = () => {
   const [formData, setFormData] = useState({ username: '', password: '' });
   const [errors, setErrors] = useState({});
@@ -324,6 +339,9 @@ const LoginCorpoelecForm = () => {
   const [loginError, setLoginError] = useState(null);
   const formRef = useRef(null);
   const router = useRouter();
+
+  // ✅ AUTH HOOK COMENTADO - Usaremos API directa
+  // const { login: authLogin } = useAuth();
 
   // ✅ Redirección después de login exitoso
   useEffect(() => {
@@ -364,7 +382,8 @@ const LoginCorpoelecForm = () => {
     return Object.keys(newErrors).length === 0;
   }, [formData]);
 
-  /* import { manejarLogin } from '../actions'; // Asegúrate de importar esto arriba */
+  // ✅ USAR HOOK DE AUTH
+  const { login: authLogin } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -381,27 +400,28 @@ const LoginCorpoelecForm = () => {
     setIsLoading(true);
     setLoginError(null);
 
+    // ✅ LIMPIEZA PREVIA DE SESIÓN (Evita roles "fantasma")
+    localStorage.removeItem('sgd_token');
+    localStorage.removeItem('sgd_user');
+    localStorage.removeItem('admin_scope_2026');
+    document.cookie = "session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+
     try {
-      const formDataToSend = new FormData();
-      formDataToSend.append('username', formData.username);
-      formDataToSend.append('password', formData.password);
+      console.log("Intentando login corporativo para:", formData.username);
 
-      // Llamamos a la Server Action directamente
-      // Nota: Pasamos un estado inicial vacío {} porque la función espera (prevState, formData)
-      const result = await manejarLogin({}, formDataToSend);
+      // ✅ USAMOS EL SISTEMA DE AUTH UNIFICADO
+      const success = await authLogin(formData.username, formData.password);
 
-      if (result.success) {
-        console.log('✅ Acceso autorizado');
+      if (success) {
+        console.log('✅ Acceso autorizado por AuthContext');
         setLoginSuccess(true);
       } else {
-        const errorMessage = result.message || 'Credenciales incorrectas';
-        setLoginError(errorMessage);
-        alert(`❌ ${errorMessage}`);
+        setLoginError('Credenciales incorrectas o error de servidor');
         setIsLoading(false);
       }
     } catch (error) {
-      console.error('Error de conexión:', error);
-      setLoginError('Error al conectar con el servidor.');
+      console.error('Error en flujo de autenticación:', error);
+      setLoginError('Error inesperado de conexión');
       setIsLoading(false);
     }
   };
@@ -509,6 +529,7 @@ const LoginCorpoelecForm = () => {
                   showError={!!errors.password}
                   autoComplete="current-password"
                   required
+                  onTogglePassword={togglePassword}
                 />
 
               </div>
@@ -519,13 +540,6 @@ const LoginCorpoelecForm = () => {
                   <span>{loginError}</span>
                 </div>
               )}
-
-              <div className="flex items-center justify-end">
-                <a href="#" className="text-sm text-red-400 hover:text-red-300 flex items-center gap-1">
-                  ¿Olvidó su contraseña?
-                  <ChevronRight size={14} />
-                </a>
-              </div>
 
               <LoadingButton isLoading={isLoading}>
                 <span className="flex items-center justify-center gap-2">
@@ -574,4 +588,3 @@ export default function LoginCorpoelec() {
 
   return <LoginCorpoelecForm />;
 }
-

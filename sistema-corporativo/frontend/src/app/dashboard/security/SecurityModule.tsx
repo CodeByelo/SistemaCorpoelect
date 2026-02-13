@@ -1,8 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Shield, Activity, Users, Lock, ChevronRight, ChevronLeft, Search, Download, Filter, FileText, Edit2, Trash2, Plus, Briefcase, Zap, Factory } from 'lucide-react';
-import { getSecurityLogs, getUsersList } from './actions';
+import { Shield, Activity, Users, Lock, ChevronRight, ChevronLeft, Search, Download, Filter, FileText, Edit2, Trash2, Plus, Briefcase, Zap, Factory, Save, X, CheckCircle } from 'lucide-react';
+import { getAllUsers } from '@/lib/api';
+import { PERMISSIONS_MASTER, DEFAULT_SCOPES, PERMISSION_LABELS } from '@/permissions/constants';
+import { useAuth } from '@/hooks/useAuth';
+import { UserRole } from '@/context/AuthContext';
 
 // Mapping icons for serialization support
 const ORG_ICONS: Record<string, React.ElementType> = {
@@ -17,7 +20,7 @@ interface SecurityModuleProps {
     darkMode: boolean;
     announcement: any;
     setAnnouncement: (data: any) => void;
-    documents: any[]; // Recibe la lista real
+    documents: any[];
     setDocuments: (docs: any[]) => void;
     userRole: string;
     orgStructure: any[];
@@ -25,20 +28,32 @@ interface SecurityModuleProps {
 }
 
 export default function SecurityModule({ darkMode, announcement, setAnnouncement, documents, setDocuments, userRole, orgStructure, setOrgStructure }: SecurityModuleProps) {
-    const [activeTab, setActiveTab] = useState('docLogs'); // Default focus on new requirement
+    const [activeTab, setActiveTab] = useState('docLogs');
     const [logs, setLogs] = useState<any[]>([]);
     const [users, setUsers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const [isUploadPanelOpen, setIsUploadPanelOpen] = useState(false); // New State
+    const [isUploadPanelOpen, setIsUploadPanelOpen] = useState(false);
+    const [selectedUserForPerms, setSelectedUserForPerms] = useState<any | null>(null);
+    const { hasPermission, user: currentUserObj } = useAuth();
+    const [isClient, setIsClient] = useState(false); // Nuevo estado para hidratación
 
-    // Mock Data for Document Logs
-    const MOCK_DOC_LOGS = [
-        { id: 1, type: 'Circular', aproxResponse: 'N/A', date: '2026-02-05', time: '08:00 AM', importance: 'Alta', sentBy: 'Gerencia General', receivedBy: 'Todas' },
-        { id: 2, type: 'Oficio', aproxResponse: '48h', date: '2026-02-04', time: '10:30 AM', importance: 'Media', sentBy: 'Jurídico', receivedBy: 'RRHH' },
-        { id: 3, type: 'Informe', aproxResponse: '5 días', date: '2026-02-04', time: '02:00 PM', importance: 'Baja', sentBy: 'TIC', receivedBy: 'Logística' },
-        { id: 4, type: 'Memorando', aproxResponse: '24h', date: '2026-02-03', time: '09:15 AM', importance: 'Alta', sentBy: 'Presidencia', receivedBy: 'Gerencia General' },
-        { id: 5, type: 'Solicitudes', aproxResponse: '72h', date: '2026-02-03', time: '11:45 AM', importance: 'Media', sentBy: 'Sindicato', receivedBy: 'Gestión Humana' },
-    ];
+    // Search states
+    const [logSearch, setLogSearch] = useState('');
+    const [docSearch, setDocSearch] = useState('');
+
+    const filteredLogs = logs.filter(log =>
+        log.username.toLowerCase().includes(logSearch.toLowerCase()) ||
+        log.evento.toLowerCase().includes(logSearch.toLowerCase()) ||
+        log.detalles.toLowerCase().includes(logSearch.toLowerCase()) ||
+        log.estado.toLowerCase().includes(logSearch.toLowerCase())
+    );
+
+    const filteredDocs = documents.filter(doc =>
+        doc.name.toLowerCase().includes(docSearch.toLowerCase()) ||
+        doc.category.toLowerCase().includes(docSearch.toLowerCase()) ||
+        doc.idDoc.toLowerCase().includes(docSearch.toLowerCase()) ||
+        doc.uploadedBy.toLowerCase().includes(docSearch.toLowerCase())
+    );
 
     const scrollRef = React.useRef<HTMLDivElement>(null);
 
@@ -53,12 +68,23 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
         }
     };
 
+    // Hook para marcar que estamos en el cliente
+    useEffect(() => {
+        setIsClient(true);
+    }, []);
+
     useEffect(() => {
         async function fetchData() {
             setLoading(true);
-            const [logsData, usersData] = await Promise.all([getSecurityLogs(), getUsersList()]);
-            setLogs(logsData);
-            setUsers(usersData);
+            try {
+                // Mock logs for now as backend doesn't support them yet
+                const logsData: any[] = [];
+                const usersData = await getAllUsers();
+                setLogs(logsData);
+                setUsers(usersData);
+            } catch (error) {
+                console.error("Error fetching security data:", error);
+            }
             setLoading(false);
         }
         fetchData();
@@ -76,7 +102,19 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
         td: darkMode ? 'text-slate-300' : 'text-slate-700'
     };
 
-    // Function to handle export
+    // Función auxiliar para contar eventos de hoy (solo en cliente)
+    const getEventsToday = () => {
+        if (!isClient) return 0;
+        const today = new Date().toLocaleDateString();
+        return logs.filter(l => new Date(l.fecha_hora).toLocaleDateString() === today).length;
+    };
+
+    // Función auxiliar para contar alertas (solo en cliente)
+    const getSecurityAlerts = () => {
+        if (!isClient) return 0;
+        return logs.filter(l => l.estado === 'danger').length;
+    };
+
     const handleExport = () => {
         if (activeTab === 'docLogs') {
             const headers = ['Tipo', 'ID', 'Título', 'Fecha', 'Hora', 'Enviado Por', 'Recibido Por'];
@@ -157,7 +195,7 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                 <div className={`p-5 rounded-xl border shadow-sm flex items-center justify-between ${theme.card}`}>
                     <div>
                         <p className="text-sm font-medium uppercase tracking-wider text-slate-500">Eventos Hoy</p>
-                        <h3 className={`text-3xl font-bold mt-1 ${theme.text}`}>{logs.filter(l => new Date(l.fecha_hora).toDateString() === new Date().toDateString()).length}</h3>
+                        <h3 className={`text-3xl font-bold mt-1 ${theme.text}`}>{getEventsToday()}</h3>
                     </div>
                     <div className={`p-3 rounded-lg ${darkMode ? 'bg-red-900/30 text-red-400' : 'bg-red-50 text-red-600'}`}>
                         <Activity size={24} />
@@ -166,7 +204,7 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                 <div className={`p-5 rounded-xl border shadow-sm flex items-center justify-between ${theme.card}`}>
                     <div>
                         <p className="text-sm font-medium uppercase tracking-wider text-slate-500">Alertas Seguridad</p>
-                        <h3 className={`text-3xl font-bold mt-1 ${theme.text}`}>{logs.filter(l => l.estado === 'danger' || l.estado === 'warning').length}</h3>
+                        <h3 className={`text-3xl font-bold mt-1 ${theme.text}`}>{getSecurityAlerts()}</h3>
                     </div>
                     <div className={`p-3 rounded-lg ${darkMode ? 'bg-amber-900/30 text-amber-400' : 'bg-amber-50 text-amber-600'}`}>
                         <Lock size={24} />
@@ -187,36 +225,46 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                     ref={scrollRef}
                     className={`flex border-b overflow-x-auto no-scrollbar scroll-smooth ${darkMode ? 'border-zinc-800' : 'border-slate-200'}`}
                 >
-                    <button
-                        onClick={() => setActiveTab('docLogs')}
-                        className={`px-6 py-3 font-bold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'docLogs' ? 'border-red-600 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
-                    >
-                        LOGS DE DOCUMENTOS
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('anuncios')}
-                        className={`px-6 py-3 font-bold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'anuncios' ? 'border-red-600 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
-                    >
-                        GESTIÓN DE ANUNCIOS
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('logs')}
-                        className={`px-6 py-3 font-bold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'logs' ? 'border-red-600 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
-                    >
-                        HISTORIAL DE ACCESOS
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('users')}
-                        className={`px-6 py-3 font-bold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'users' ? 'border-red-600 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
-                    >
-                        GESTIÓN DE USUARIOS
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('orgMgmt')}
-                        className={`px-6 py-3 font-bold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'orgMgmt' ? 'border-red-600 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
-                    >
-                        ESTRUCTURA ORGANIZATIVA
-                    </button>
+                    {hasPermission(PERMISSIONS_MASTER.SECURITY_VIEW_LOGS) && (
+                        <button
+                            onClick={() => setActiveTab('docLogs')}
+                            className={`px-6 py-3 font-bold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'docLogs' ? 'border-red-600 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                        >
+                            LOGS DE DOCUMENTOS
+                        </button>
+                    )}
+                    {hasPermission(PERMISSIONS_MASTER.SECURITY_ANNOUNCEMENTS) && (
+                        <button
+                            onClick={() => setActiveTab('anuncios')}
+                            className={`px-6 py-3 font-bold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'anuncios' ? 'border-red-600 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                        >
+                            GESTIÓN DE ANUNCIOS
+                        </button>
+                    )}
+                    {hasPermission(PERMISSIONS_MASTER.SECURITY_VIEW_LOGS) && (
+                        <button
+                            onClick={() => setActiveTab('logs')}
+                            className={`px-6 py-3 font-bold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'logs' ? 'border-red-600 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                        >
+                            HISTORIAL DE ACCESOS
+                        </button>
+                    )}
+                    {hasPermission(PERMISSIONS_MASTER.SECURITY_MANAGE_USERS) && (
+                        <button
+                            onClick={() => setActiveTab('users')}
+                            className={`px-6 py-3 font-bold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'users' ? 'border-red-600 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                        >
+                            GESTIÓN DE USUARIOS
+                        </button>
+                    )}
+                    {hasPermission(PERMISSIONS_MASTER.SYS_DEV_TOOLS) && (
+                        <button
+                            onClick={() => setActiveTab('orgMgmt')}
+                            className={`px-6 py-3 font-bold text-sm transition-all border-b-2 whitespace-nowrap ${activeTab === 'orgMgmt' ? 'border-red-600 text-red-600' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                        >
+                            ESTRUCTURA ORGANIZATIVA
+                        </button>
+                    )}
                 </div>
 
                 <button
@@ -235,8 +283,7 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                     </div>
                 ) : (
                     <>
-                        {/* TAB: DOC LOGS */}
-                        {/* TAB CONTENT: GESTIÓN DE ANUNCIOS */}
+                        {/* TAB: GESTIÓN DE ANUNCIOS */}
                         {activeTab === 'anuncios' && (
                             <div className="animate-in fade-in duration-500">
                                 <div className={`p-4 border-b flex justify-between items-center ${darkMode ? 'border-zinc-800' : 'border-slate-100'}`}>
@@ -322,6 +369,7 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                             </div>
                         )}
 
+                        {/* TAB: DOC LOGS */}
                         {activeTab === 'docLogs' && (
                             <div>
                                 <div className={`p-4 border-b flex justify-between items-center ${darkMode ? 'border-zinc-800' : 'border-slate-100'}`}>
@@ -331,6 +379,8 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                                             <input
                                                 type="text"
+                                                value={docSearch}
+                                                onChange={(e) => setDocSearch(e.target.value)}
                                                 placeholder="Buscar documento..."
                                                 className={`pl-9 pr-4 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 ${theme.input}`}
                                             />
@@ -358,7 +408,7 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                                             </tr>
                                         </thead>
                                         <tbody className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-slate-100'}`}>
-                                            {documents.map((log) => (
+                                            {filteredDocs.map((log) => (
                                                 <tr key={log.id} className={`${theme.rowHover} transition-colors`}>
                                                     <td className={`px-6 py-4 flex flex-col ${theme.text}`}>
                                                         <span className="font-bold text-xs text-red-500">{log.category}</span>
@@ -370,7 +420,7 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                                                     <td className={`px-6 py-4 ${theme.text}`}>{log.uploadedBy}</td>
                                                     <td className={`px-6 py-4 ${theme.text}`}>{log.receivedBy}</td>
                                                     <td className={`px-6 py-4 text-center`}>
-                                                        {userRole === 'admin' && (
+                                                        {hasPermission(PERMISSIONS_MASTER.SYS_DEV_TOOLS) && (
                                                             <button
                                                                 onClick={() => deleteDocument(log.id, log.name)}
                                                                 className="p-2 text-red-500 hover:bg-red-500/10 rounded-full transition-colors"
@@ -388,6 +438,7 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                             </div>
                         )}
 
+                        {/* TAB: LOGS */}
                         {activeTab === 'logs' && (
                             <div>
                                 <div className={`p-4 border-b flex justify-between items-center ${darkMode ? 'border-zinc-800' : 'border-slate-100'}`}>
@@ -396,6 +447,8 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                                         <input
                                             type="text"
+                                            value={logSearch}
+                                            onChange={(e) => setLogSearch(e.target.value)}
                                             placeholder="Buscar evento..."
                                             className={`pl-9 pr-4 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 ${theme.input}`}
                                         />
@@ -414,7 +467,7 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                                             </tr>
                                         </thead>
                                         <tbody className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-slate-100'}`}>
-                                            {logs.map((log) => (
+                                            {filteredLogs.map((log) => (
                                                 <tr key={log.id} className={`${theme.rowHover} transition-colors`}>
                                                     <td className={`px-6 py-4 font-medium border-l-4 border-transparent hover:border-red-500 ${theme.text}`}>
                                                         {log.username}
@@ -423,7 +476,13 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                                                     <td className={`px-6 py-4 ${theme.subtext}`}>{log.detalles}</td>
                                                     <td className="px-6 py-4 font-mono text-xs opacity-70">{log.ip_address}</td>
                                                     <td className={`px-6 py-4 ${theme.subtext}`}>
-                                                        {new Date(log.fecha_hora).toLocaleDateString()} <span className="text-xs opacity-70">{new Date(log.fecha_hora).toLocaleTimeString()}</span>
+                                                        {isClient ? (
+                                                            <>
+                                                                {new Date(log.fecha_hora).toLocaleDateString()} <span className="text-xs opacity-70">{new Date(log.fecha_hora).toLocaleTimeString()}</span>
+                                                            </>
+                                                        ) : (
+                                                            <span>--</span>
+                                                        )}
                                                     </td>
                                                     <td className="px-6 py-4">
                                                         <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${log.estado === 'success' ? (darkMode ? 'bg-green-500/10 text-green-400' : 'bg-green-100 text-green-700') :
@@ -449,13 +508,16 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                             </div>
                         )}
 
+                        {/* TAB: USERS */}
                         {activeTab === 'users' && (
-                            <div>
+                            <div className="animate-in fade-in duration-500">
                                 <div className={`p-4 border-b flex justify-between items-center ${darkMode ? 'border-zinc-800' : 'border-slate-100'}`}>
                                     <h3 className={`font-bold ${theme.text}`}>Directorio de Usuarios</h3>
-                                    <a href="/registro" className="text-sm text-white bg-red-600 px-3 py-1.5 rounded-lg font-medium hover:bg-red-700 flex items-center gap-1 transition-colors">
-                                        <span>+</span> Crear Usuario
-                                    </a>
+                                    {hasPermission(PERMISSIONS_MASTER.SECURITY_MANAGE_USERS) && (
+                                        <a href="/registro" className="text-sm text-white bg-red-600 px-3 py-1.5 rounded-lg font-medium hover:bg-red-700 flex items-center gap-1 transition-colors">
+                                            <span>+</span> Crear Usuario
+                                        </a>
+                                    )}
                                 </div>
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-sm text-left">
@@ -464,46 +526,68 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                                                 <th className="px-6 py-3 font-semibold">Usuario</th>
                                                 <th className="px-6 py-3 font-semibold">Nombre Completo</th>
                                                 <th className="px-6 py-3 font-semibold">Gerencia</th>
-                                                <th className="px-6 py-3 font-semibold">Email</th>
                                                 <th className="px-6 py-3 font-semibold">Nivel Permiso</th>
-                                                <th className="px-6 py-3 font-semibold">Acciones</th>
+                                                <th className="px-6 py-3 font-semibold text-center">Acciones</th>
                                             </tr>
                                         </thead>
                                         <tbody className={`divide-y ${darkMode ? 'divide-zinc-800' : 'divide-slate-100'}`}>
-                                            {users.map((user) => (
-                                                <tr key={user.id} className={`${theme.rowHover} transition-colors`}>
-                                                    <td className={`px-6 py-4 font-bold flex items-center gap-2 ${theme.text}`}>
-                                                        <div className="w-8 h-8 rounded-full bg-red-100 text-red-600 flex items-center justify-center font-bold text-xs">
-                                                            {user.usuario_corp ? user.usuario_corp.substring(0, 2).toUpperCase() : '??'}
-                                                        </div>
-                                                        {user.usuario_corp}
-                                                    </td>
-                                                    <td className={`px-6 py-4 ${theme.text}`}>{user.nombre} {user.apellido}</td>
-                                                    <td className={`px-6 py-4 ${theme.subtext}`}>{user.gerencia_depto}</td>
-                                                    <td className={`px-6 py-4 ${theme.subtext}`}>{user.email_corp}</td>
-                                                    <td className="px-6 py-4">
-                                                        <select className={`px-2 py-1 rounded border text-xs font-semibold outline-none ${darkMode ? 'border-slate-700 bg-slate-800 text-slate-300' : 'border-slate-200 bg-white text-slate-600'}`}>
-                                                            <option>Usuario</option>
-                                                            <option>Administrador</option>
-                                                            <option>CEO</option>
-                                                        </select>
-                                                    </td>
-                                                    <td className="px-6 py-4">
-                                                        <a
-                                                            href={`/dashboard/security/user/${user.id}`}
-                                                            className="text-blue-600 hover:text-blue-800 font-medium text-xs hover:underline"
-                                                        >
-                                                            Ver Historial
-                                                        </a>
-                                                    </td>
-                                                </tr>
-                                            ))}
+                                            {users.map((u) => {
+                                                const canManageThisUser = u.role !== 'Desarrollador' && u.id !== currentUserObj?.id;
+                                                return (
+                                                    <tr key={u.id} className={`${theme.rowHover} transition-colors`}>
+                                                        <td className={`px-6 py-4 font-bold flex items-center gap-2 ${theme.text}`}>
+                                                            <div className="w-8 h-8 rounded-full bg-red-100 text-red-600 flex items-center justify-center font-bold text-xs uppercase">
+                                                                {u.usuario_corp ? u.usuario_corp.substring(0, 2) : '??'}
+                                                            </div>
+                                                            {u.usuario_corp}
+                                                        </td>
+                                                        <td className={`px-6 py-4 ${theme.text}`}>{u.nombre} {u.apellido}</td>
+                                                        <td className={`px-6 py-4 ${theme.subtext}`}>{u.gerencia_depto}</td>
+                                                        <td className="px-6 py-4">
+                                                            <span className={`px-2 py-1 rounded text-[10px] font-black uppercase ${u.role === 'Desarrollador' ? 'bg-red-600 text-white' : (u.role === 'Administrativo' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-200')}`}>
+                                                                {u.role || 'Usuario'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-center">
+                                                            <div className="flex items-center justify-center gap-3">
+                                                                {canManageThisUser && hasPermission(PERMISSIONS_MASTER.SECURITY_MANAGE_USERS) ? (
+                                                                    <button
+                                                                        onClick={() => setSelectedUserForPerms(u)}
+                                                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600/10 text-blue-400 hover:bg-blue-600/20 rounded-lg text-xs font-bold border border-blue-500/20 transition-all"
+                                                                    >
+                                                                        <Lock size={12} /> GESTIONAR PERMISOS
+                                                                    </button>
+                                                                ) : (
+                                                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest italic">Solo Lectura (DEV/PROPIO)</span>
+                                                                )}
+                                                                <a
+                                                                    href={`/dashboard/security/user/${u.id}`}
+                                                                    className="p-2 text-slate-400 hover:text-white transition-colors"
+                                                                    title="Ver Auditoría"
+                                                                >
+                                                                    <Activity size={16} />
+                                                                </a>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
                                         </tbody>
                                     </table>
                                 </div>
+
+                                {selectedUserForPerms && (
+                                    <UserPermissionsModal
+                                        user={selectedUserForPerms}
+                                        onClose={() => setSelectedUserForPerms(null)}
+                                        darkMode={darkMode}
+                                        currentUserPerms={currentUserObj?.permissions || []}
+                                    />
+                                )}
                             </div>
                         )}
 
+                        {/* TAB: ESTRUCTURA ORGANIZATIVA */}
                         {activeTab === 'orgMgmt' && (
                             <div className="space-y-6 animate-in fade-in duration-500 p-6">
                                 <div className={`p-6 rounded-xl border ${theme.card}`}>
@@ -583,6 +667,7 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                     </>
                 )}
             </div>
+
             {/* Upload Document Slide-over Panel */}
             {isUploadPanelOpen && (
                 <div className="fixed inset-0 z-[100] flex justify-end bg-black/50 backdrop-blur-sm animate-in fade-in duration-300">
@@ -593,7 +678,6 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                                 onClick={() => setIsUploadPanelOpen(false)}
                                 className={`p-2 rounded-full hover:bg-slate-800 transition-colors ${theme.subtext}`}
                             >
-                                <Users size={20} className="rotate-45" /> {/* Simple X replacement if icon not in scope or just text */}
                                 <span className="font-bold">X</span>
                             </button>
                         </div>
@@ -634,6 +718,91 @@ export default function SecurityModule({ darkMode, announcement, setAnnouncement
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+function UserPermissionsModal({ user, onClose, darkMode, currentUserPerms }: { user: any, onClose: () => void, darkMode: boolean, currentUserPerms: string[] }) {
+    const [userPerms, setUserPerms] = useState<string[]>(user.permissions || []);
+    const [saved, setSaved] = useState(false);
+
+    // Jerarquía: Los permisos disponibles para asignar son solo aquellos que el admin posee
+    const availablePermissions = Object.values(PERMISSIONS_MASTER).filter(p => currentUserPerms.includes(p));
+
+    const togglePermission = (perm: string) => {
+        setUserPerms(prev =>
+            prev.includes(perm) ? prev.filter(p => p !== perm) : [...prev, perm]
+        );
+        setSaved(false);
+    };
+
+    const handleSave = () => {
+        // En un entorno real, persiste en DB
+        setSaved(true);
+        setTimeout(() => {
+            setSaved(false);
+            onClose();
+        }, 1500);
+        alert(`Permisos actualizados para ${user.nombre}. (Regla 2: Solo se asignaron permisos permitidos por el AdminScope).`);
+    };
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+            <div className={`w-full max-w-2xl rounded-2xl border shadow-2xl overflow-hidden ${darkMode ? 'bg-zinc-900 border-zinc-800 text-white' : 'bg-white border-slate-200 text-slate-900'}`}>
+                <div className="p-6 border-b border-zinc-800/50 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2.5 bg-blue-600 rounded-xl text-white">
+                            <Lock size={18} />
+                        </div>
+                        <div>
+                            <h3 className="font-bold">Gestión de Permisos Granulares</h3>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black">{user.nombre} {user.apellido} ({user.rol || 'Usuario'})</p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition-colors"><X size={20} /></button>
+                </div>
+
+                <div className="p-6 max-h-[60vh] overflow-y-auto no-scrollbar">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {availablePermissions.length > 0 ? (
+                            availablePermissions.map(perm => (
+                                <label key={perm} className={`p-4 rounded-xl border flex items-center justify-between cursor-pointer group transition-all ${userPerms.includes(perm) ? (darkMode ? 'bg-blue-600/10 border-blue-500/50' : 'bg-blue-50 border-blue-200') : (darkMode ? 'bg-zinc-950/50 border-zinc-800' : 'bg-slate-50 border-slate-100')}`}>
+                                    <div>
+                                        <p className={`text-[11px] font-bold ${userPerms.includes(perm) ? (darkMode ? 'text-blue-400' : 'text-blue-700') : 'text-slate-500'}`}>
+                                            {PERMISSION_LABELS[perm] || perm}
+                                        </p>
+                                    </div>
+                                    <div className="relative">
+                                        <input
+                                            type="checkbox"
+                                            checked={userPerms.includes(perm)}
+                                            onChange={() => togglePermission(perm)}
+                                            className="sr-only"
+                                        />
+                                        <div className={`w-10 h-6 rounded-full transition-colors ${userPerms.includes(perm) ? 'bg-blue-600' : (darkMode ? 'bg-zinc-800' : 'bg-slate-300')}`} />
+                                        <div className={`absolute w-4 h-4 rounded-full bg-white transition-all shadow-sm ${userPerms.includes(perm) ? 'translate-x-5' : 'translate-x-1'} top-1`} />
+                                    </div>
+                                </label>
+                            ))
+                        ) : (
+                            <div className="col-span-2 py-10 text-center italic text-slate-500 text-sm">
+                                Tu AdminScope no permite asignar permisos adicionales.
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="p-6 border-t border-zinc-800/50 flex justify-end gap-3">
+                    <button onClick={onClose} className="px-6 py-2 rounded-xl text-sm font-bold hover:bg-slate-800 transition-colors">CANCELAR</button>
+                    <button
+                        onClick={handleSave}
+                        className={`px-8 py-2 rounded-xl text-sm font-bold transition-all transform active:scale-95 flex items-center gap-2 ${saved ? 'bg-green-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-900/40'}`}
+                    >
+                        {saved ? <CheckCircle size={16} /> : <Save size={16} />}
+                        {saved ? 'GUARDADO' : 'APLICAR CAMBIOS'}
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }

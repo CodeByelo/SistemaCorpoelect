@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Shield, Zap, Lock, User, Mail, Phone, CheckCircle, AlertCircle, ChevronRight, ArrowLeft, Briefcase } from 'lucide-react';
-import { registrarUsuario } from '../actions';
+// import { registrarUsuario } from '../actions';
+import { register } from '@/lib/api';
 
 // ====================================================================
 // NEON CHECKBOX
@@ -385,18 +386,27 @@ const LoadingButton = ({ isLoading, children, ...props }) => (
 );
 
 const Particles = () => {
-  const particles = Array.from({ length: 20 }, (_, i) => ({
-    id: i,
-    x: Math.random() * 100,
-    y: Math.random() * 100,
-    size: Math.random() * 4 + 2,
-    duration: Math.random() * 20 + 15,
-    delay: Math.random() * 5,
-  }));
+  const [mounted, setMounted] = useState(false);
+  const [particleList, setParticleList] = useState([]);
+
+  useEffect(() => {
+    const generated = Array.from({ length: 20 }, (_, i) => ({
+      id: i,
+      x: Math.random() * 100,
+      y: Math.random() * 100,
+      size: Math.random() * 4 + 2,
+      duration: Math.random() * 20 + 15,
+      delay: Math.random() * 5,
+    }));
+    setParticleList(generated);
+    setMounted(true);
+  }, []);
+
+  if (!mounted) return null;
 
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {particles.map(p => (
+      {particleList.map(p => (
         <div
           key={p.id}
           className="absolute bg-red-500/20 rounded-full animate-float"
@@ -419,7 +429,6 @@ const RegistroForm = () => {
     nombre: '',
     apellido: '',
     email: '',
-    telefono: '',
     username: '',
     password: '',
     confirmPassword: '',
@@ -468,9 +477,6 @@ const RegistroForm = () => {
     if (!email.trim()) newErrors.email = 'Email requerido';
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) newErrors.email = 'Email inválido';
 
-    if (!telefono.trim()) newErrors.telefono = 'Teléfono requerido';
-    else if (!/^\d{10,15}$/.test(telefono.replace(/[\s\-\(\)]/g, ''))) newErrors.telefono = 'Teléfono inválido';
-
     if (!gerencia) newErrors.gerencia = 'Seleccione una gerencia';
 
     if (!username.trim()) newErrors.username = 'Usuario corporativo requerido';
@@ -488,7 +494,7 @@ const RegistroForm = () => {
     return Object.keys(newErrors).length === 0;
   }, [formData, terminosAceptados]);
 
-  /* import { registrarUsuario } from '../actions'; */
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -505,31 +511,26 @@ const RegistroForm = () => {
     setIsLoading(true);
 
     try {
-      const formDataToSend = new FormData();
-      formDataToSend.append('nombre', formData.nombre);
-      formDataToSend.append('apellido', formData.apellido);
-      formDataToSend.append('email_corp', formData.email); // Ojo: en DB es email_corp, en form es email
-      formDataToSend.append('telefono', formData.telefono);
-      formDataToSend.append('usuario_corp', formData.username); // DB usuario_corp, form username
-      formDataToSend.append('password', formData.password);
-      formDataToSend.append('gerencia_depto', formData.gerencia); // DB gerencia_depto, form gerencia
+      // Preparar datos para el backend Python
+      const userData = {
+        nombre: formData.nombre,
+        apellido: formData.apellido,
+        email: formData.email,
+        username: formData.username,
+        password: formData.password,
+        gerencia_nombre: formData.gerencia, // El backend buscará el ID por nombre
+        rol_id: 3 // Usuario por defecto (aunque el backend ya lo asigna)
+      };
 
-      const result = await registrarUsuario(formDataToSend);
+      await register(userData);
 
-      if (result?.error) {
-        // Hubo error en la DB
-        alert(`❌ Error al registrar: ${result.error}`);
-        setIsLoading(false);
-      } else {
-        // Éxito (aunque la action redirige, por si acaso manejamos estado)
-        console.log('✅ Registro exitoso en DB');
-        setRegistroSuccess(true);
-        // No hacemos setIsLoading(false) para evitar parpadeo antes del redirect
-      }
+      // Éxito
+      console.log('✅ Registro exitoso en DB');
+      setRegistroSuccess(true);
 
     } catch (error) {
       console.error("Error frontend:", error);
-      alert("Ocurrió un error inesperado al conectar con el servidor.");
+      alert(`❌ Error: ${error.message}`);
       setIsLoading(false);
     }
   };
@@ -630,35 +631,19 @@ const RegistroForm = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <AnimatedInput
-                  id="email"
-                  label="Email"
-                  value={formData.email}
-                  onChange={handleChange('email')}
-                  placeholder="ej: j.perez@corpoelec.com"
-                  icon={Mail}
-                  type="email"
-                  error={errors.email}
-                  showError={!!errors.email}
-                  autoComplete="email"
-                  required
-                />
-
-                <AnimatedInput
-                  id="telefono"
-                  label="A2F"
-                  value={formData.telefono}
-                  onChange={handleChange('telefono')}
-                  placeholder="ej: 0412-1234567"
-                  icon={Phone}
-                  type="tel"
-                  error={errors.telefono}
-                  showError={!!errors.telefono}
-                  autoComplete="tel"
-                  required
-                />
-              </div>
+              <AnimatedInput
+                id="email"
+                label="Email"
+                value={formData.email}
+                onChange={handleChange('email')}
+                placeholder="ej: juan.perez@ejemplo.com"
+                icon={Mail}
+                type="email"
+                error={errors.email}
+                showError={!!errors.email}
+                autoComplete="email"
+                required
+              />
 
               <AnimatedInput
                 id="username"
@@ -682,14 +667,22 @@ const RegistroForm = () => {
                 error={errors.gerencia}
                 showError={!!errors.gerencia}
                 options={[
-                  'Tecnología e Informática',
-                  'Recursos Humanos',
-                  'Finanzas y Contabilidad',
-                  'Operaciones',
-                  'Comercial y Ventas',
-                  'Legal',
                   'Gerencia General',
-                  'Seguridad Industrial'
+                  'Auditoria Interna',
+                  'Consultoría Jurídica',
+                  'Gerencia Nacional de Planificación y presupuesto',
+                  'Gerencia Nacional de Administración',
+                  'Gerencia Nacional de Gestión Humana',
+                  'Gerencia Nacional de Tecnologías de la Información y la Comunicación',
+                  'Gerencia Nacional de Tecnologías de Proyectos',
+                  'Gerencia Nacional de Adecuaciones y Mejoras',
+                  'Gerencia Nacional de Asho',
+                  'Gerencia Nacional de Atención al Ciudadano',
+                  'Gerencia de Comercialización',
+                  'Gerencia Nacional de Energía Alternativa y Eficiencia Energética',
+                  'Gerencia Nacional de Gestión Communal',
+                  'Unerven',
+                  'Vietven'
                 ]}
                 required
               />
@@ -1038,11 +1031,20 @@ const RegistroForm = () => {
 };
 
 export default function RegistroPage() {
+  const [mounted, setMounted] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleSplashComplete = () => {
     setShowSplash(false);
   };
+
+  if (!mounted) {
+    return <div className="min-h-screen bg-black" />; // Evita mismatch de hidratación brindando un estado inicial vacío
+  }
 
   if (showSplash) {
     return <SplashScreen onComplete={handleSplashComplete} />;

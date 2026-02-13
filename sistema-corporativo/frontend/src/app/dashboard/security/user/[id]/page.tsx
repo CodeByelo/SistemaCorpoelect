@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, User, Shield, Clock, Activity, FileText, Lock, Calendar } from 'lucide-react';
-import { getUserDetails, getUserLogs } from '../../actions';
+import { getUserDetails, getUserLogs, deleteUser } from '../../actions';
 
 // Define params type correctly for Next.js 15+
 type Params = Promise<{ id: string }>;
@@ -14,10 +14,13 @@ export default function UserHistoryPage({ params }: { params: Params }) {
     const [logs, setLogs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
-    // Unwrap params using React.use() or await inside effect if it's a promise
-    // Since this is a client component receiving params as a promise in newer Next.js versions:
+    const [mounted, setMounted] = useState(false);
     const resolvedParams = React.use(params);
     const userId = resolvedParams.id;
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     useEffect(() => {
         async function fetchData() {
@@ -34,7 +37,25 @@ export default function UserHistoryPage({ params }: { params: Params }) {
         fetchData();
     }, [userId]);
 
-    if (loading) {
+    const handleDelete = async () => {
+        if (!window.confirm("¿Está seguro de que desea eliminar permanentemente esta cuenta? Esta acción no se puede deshacer.")) {
+            return;
+        }
+
+        try {
+            const res = await deleteUser(userId);
+            if (res.success) {
+                alert("Usuario eliminado correctamente.");
+                router.push('/dashboard?tab=seguridad');
+            } else {
+                alert("Error al eliminar usuario: " + res.error);
+            }
+        } catch (error) {
+            alert("Error crítico al eliminar usuario.");
+        }
+    };
+
+    if (!mounted || loading) {
         return (
             <div className="flex items-center justify-center min-h-screen bg-slate-50">
                 <div className="w-10 h-10 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div>
@@ -105,11 +126,12 @@ export default function UserHistoryPage({ params }: { params: Params }) {
                     >
                         Reset Password
                     </button>
+
                     <button
-                        onClick={() => alert("Cuenta bloqueada preventivamente.")}
+                        onClick={handleDelete}
                         className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-sm shadow-sm transition-all active:scale-[0.98]"
                     >
-                        Bloquear Cuenta
+                        Eliminar Cuenta
                     </button>
                 </div>
             </div>

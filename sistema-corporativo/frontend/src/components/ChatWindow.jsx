@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Send, Loader2, AlertCircle, MessageSquare, Plus, History, Brain, Save, Trash2, ChevronLeft } from 'lucide-react';
 
-export default function ChatWindow({ isOpen, onClose }) {
+export default function ChatWindow({ isOpen, onClose, userRole }) {
     // Estados principales
     const [conversations, setConversations] = useState([]);
     const [currentConvId, setCurrentConvId] = useState(null);
@@ -111,6 +111,10 @@ export default function ChatWindow({ isOpen, onClose }) {
     };
 
     const saveTraining = () => {
+        if (userRole !== 'admin') {
+            alert("Acceso Denegado: Solo el administrador puede entrenar al asistente.");
+            return;
+        }
         if (!trainQuestion.trim() || !trainAnswer.trim()) return;
 
         const newEntry = {
@@ -261,9 +265,15 @@ export default function ChatWindow({ isOpen, onClose }) {
                         </div>
 
                         <div className="flex items-center gap-1">
-                            <button onClick={() => setView('train')} className={`p-2 rounded-full hover:bg-white/10 text-white ${view === 'train' ? 'bg-white/20' : ''}`} title="Entrenar Bot">
-                                <Brain size={16} />
-                            </button>
+                            {userRole === 'admin' && (
+                                <button
+                                    onClick={() => setView('train')}
+                                    className={`p-2 rounded-full hover:bg-white/10 text-white ${view === 'train' ? 'bg-white/20' : ''}`}
+                                    title="Entrenar Bot"
+                                >
+                                    <Brain size={16} />
+                                </button>
+                            )}
                             <button onClick={() => setView(view === 'history' ? 'chat' : 'history')} className={`p-2 rounded-full hover:bg-white/10 text-white ${view === 'history' ? 'bg-white/20' : ''}`} title="Historial">
                                 <History size={16} />
                             </button>

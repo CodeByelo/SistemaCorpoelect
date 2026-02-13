@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Home, BarChart2, Users, Settings, Bell, Search,
   ChevronRight, Activity, Server, Shield, Zap, LogOut,
@@ -13,23 +13,34 @@ import {
 import BotButton from '@/components/BotButton';
 import ChatWindow from '@/components/ChatWindow';
 import TicketSystem, { Ticket } from '@/components/TicketSystem';
+import MasterPermissionPanel from '@/components/MasterPermissionPanel';
 import { logDocumentActivity } from '@/app/dashboard/security/actions';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/hooks/useAuth';
+import { UserRole, User } from '@/context/AuthContext';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import { useIdleTimer } from '@/hooks/useIdleTimer';
+import { DepartmentGrid } from './components/DepartmentGrid';
+import { DepartmentDetailView } from './components/DepartmentDetailView';
+import { OrgCategory, Document } from './types';
+import { RoleGuard } from '@/components/RoleGuard';
+import { PERMISSIONS_MASTER } from '@/permissions/constants';
+import {
+  getDocumentos,
+  uploadDocumento,
+  updateDocumentStatus as apiUpdateStatus,
+  getAllUsers,
+  getGerencias
+} from '../../lib/api';
+import { ApiDocument, ApiUser } from '@/lib/api';
 
 // ==========================================
 // TIPOS Y INTERFACES
 // ==========================================
-interface OrgCategory {
-  category: string;
-  icon: string;
-  items: string[];
-  expanded?: boolean;
-}
+
 interface SidebarItemProps {
   icon: React.ElementType;
   label: string;
@@ -59,32 +70,7 @@ interface PriorityItem {
   deadline: string;
   status: 'pendiente' | 'en-progreso' | 'completado';
 }
-interface Document {
-  id: number;
-  idDoc: string;
-  name: string;
-  type: 'pdf' | 'word' | 'excel' | 'powerpoint';
-  category: string; // Circular, Oficio, Informe, etc.
-  size: string;
-  uploadedBy: string; // Enviado Por
-  receivedBy: string; // Recibido Por
-  uploadDate: string;
-  uploadTime: string;
-  signatureStatus: 'pendiente' | 'aprobado' | 'rechazado' | 'omitido' | 'en-proceso';
-  department: string; // Gerencia (Origen)
-  targetDepartment: string; // Gerencia (Destino)
-  fileUrl?: string;
-}
-interface Printer {
-  id: number;
-  name: string;
-  model: string;
-  location: string;
-  status: 'operativo' | 'mantenimiento' | 'fuera-servicio';
-  tonerLevel: number;
-  paperLevel: number;
-  lastMaintenance: string;
-}
+
 
 interface AnnouncementData {
   badge: string;
@@ -178,6 +164,24 @@ const MANAGEMENT_DETAILS: Record<string, string[]> = {
     "Desarrollo y soporte de sistemas de información.",
     "Garantizar la seguridad de la información.",
     "Soporte técnico a usuarios finales."
+  ],
+  "Gestión Directa": [
+    "Acceso a la terminal de comandos del servidor.",
+    "Monitoreo de procesos en tiempo real.",
+    "Ajuste de variables de entorno críticas.",
+    "Gestión de certificados SSL y seguridad perimetral."
+  ],
+  "Bypass de Sistema": [
+    "Activación de protocolos de emergencia.",
+    "Salto de validación MFA para soporte técnico.",
+    "Recuperación forzada de cuentas administrativas.",
+    "Desactivación temporal de firewalls de aplicación."
+  ],
+  "Logs de Auditoría": [
+    "Consulta de trazas de base de datos a bajo nivel.",
+    "Historial completo de intentos de intrusión.",
+    "Seguimiento de cambios en esquemas de permisos.",
+    "Exportación de logs en formato raw JSON/CSV."
   ]
 };
 
@@ -341,58 +345,6 @@ const INITIAL_TICKETS: Ticket[] = [
   }
 ];
 
-const PRINTERS: Printer[] = [
-  {
-    id: 1,
-    name: "Impresora Gerencia Principal",
-    model: "HP LaserJet Pro M404dn",
-    location: "Edificio Central - Piso 3",
-    status: 'operativo',
-    tonerLevel: 85,
-    paperLevel: 90,
-    lastMaintenance: "15/01/2026"
-  },
-  {
-    id: 2,
-    name: "Impresora Departamento TIC",
-    model: "Canon imageCLASS MF644Cdw",
-    location: "Edificio Central - Piso 2",
-    status: 'operativo',
-    tonerLevel: 65,
-    paperLevel: 70,
-    lastMaintenance: "20/01/2026"
-  },
-  {
-    id: 3,
-    name: "Impresora Administración",
-    model: "Brother HL-L8360CDW",
-    location: "Edificio Central - Piso 1",
-    status: 'mantenimiento',
-    tonerLevel: 25,
-    paperLevel: 40,
-    lastMaintenance: "01/02/2026"
-  },
-  {
-    id: 4,
-    name: "Impresora Producción",
-    model: "Epson WorkForce Pro WF-C5790",
-    location: "Planta Luis Zambrano",
-    status: 'operativo',
-    tonerLevel: 92,
-    paperLevel: 85,
-    lastMaintenance: "10/01/2026"
-  },
-  {
-    id: 5,
-    name: "Impresora Logística",
-    model: "HP Color LaserJet Pro M255dw",
-    location: "Bodega Principal",
-    status: 'fuera-servicio',
-    tonerLevel: 10,
-    paperLevel: 5,
-    lastMaintenance: "25/01/2026"
-  }
-];
 
 // NUEVOS DATOS PARA MÓDULO DE SEGURIDAD
 const ACCOUNT_REQUESTS = [
@@ -659,7 +611,12 @@ const AlertCard: React.FC<{
 // ==========================================
 // NUEVOS COMPONENTES MODULARES
 // ==========================================
-const PriorityMatrix: React.FC<{ darkMode: boolean; userRole: 'admin' | 'user' }> = ({ darkMode, userRole }) => {
+const PriorityMatrix: React.FC<{
+  darkMode: boolean;
+  userRole: UserRole;
+  isReadOnly?: boolean;
+  hasPermission: (permission: string) => boolean;
+}> = ({ darkMode, userRole, isReadOnly, hasPermission }) => {
   const getPriorityColor = (priority: string) => {
     switch (priority) {
       case 'alta': return darkMode ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-700';
@@ -678,7 +635,7 @@ const PriorityMatrix: React.FC<{ darkMode: boolean; userRole: 'admin' | 'user' }
     }
   };
 
-  const filteredPriorities = userRole === 'admin'
+  const filteredPriorities = hasPermission(PERMISSIONS_MASTER.PRIORITIES_VIEW_ALL)
     ? PRIORITY_MATRIX
     : PRIORITY_MATRIX.filter(item =>
       item.responsible.includes('TIC') || item.responsible === 'Gerencia TI'
@@ -686,13 +643,15 @@ const PriorityMatrix: React.FC<{ darkMode: boolean; userRole: 'admin' | 'user' }
 
   return (
     <div className="space-y-4 pt-2">
-      <div className="flex justify-end mb-2">
-        <button className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${darkMode ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-slate-300 text-slate-700 hover:bg-slate-50'
-          }`}>
-          <Download size={16} className="inline mr-2" />
-          Exportar
-        </button>
-      </div>
+      {hasPermission(PERMISSIONS_MASTER.PRIORITIES_EXPORT) && (
+        <div className="flex justify-end mb-2">
+          <button className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${darkMode ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+            }`}>
+            <Download size={16} className="inline mr-2" />
+            Exportar
+          </button>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className={`w-full rounded-lg overflow-hidden ${darkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white border border-slate-200'
           }`}>
@@ -754,11 +713,18 @@ const PriorityMatrix: React.FC<{ darkMode: boolean; userRole: 'admin' | 'user' }
 
 const DocumentManager: React.FC<{
   darkMode: boolean;
-  userRole: 'admin' | 'user';
+  userRole: UserRole;
+  userDept: string;
   documents: Document[];
   setDocuments: React.Dispatch<React.SetStateAction<Document[]>>;
   orgStructure: OrgCategory[];
-}> = ({ darkMode, userRole, documents, setDocuments, orgStructure }) => {
+  isReadOnly?: boolean;
+  hasPermission: (permission: string) => boolean;
+  user: User | null;
+  users: any[];
+  gerencias: any[];
+  refreshDocs: () => void;
+}> = ({ darkMode, userRole, userDept, documents, setDocuments, orgStructure, isReadOnly, hasPermission, user, users, gerencias, refreshDocs }) => {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterDept, setFilterDept] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -769,62 +735,88 @@ const DocumentManager: React.FC<{
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [docName, setDocName] = useState('');
-  const [sentBy, setSentBy] = useState('');
+  const [sentBy, setSentBy] = useState('Maria Rodríguez');
   const [docCategory, setDocCategory] = useState('Informe');
-  const [targetDept, setTargetDept] = useState('Gerencia General');
+  const [targetDeptId, setTargetDeptId] = useState<string>('');
+  const [correlativo, setCorrelativo] = useState('');
 
   // Extract unique departments for filter
   const departments = useMemo(() => {
     return orgStructure.flatMap(group => group.items);
   }, [orgStructure]);
 
-  // Ensure targetDept is valid when departments load
   useEffect(() => {
-    if (departments.length > 0 && !departments.includes(targetDept)) {
-      setTargetDept(departments[0]);
+    if (gerencias.length > 0 && !targetDeptId) {
+      setTargetDeptId(gerencias[0].id.toString());
     }
-  }, [departments, targetDept]);
+  }, [gerencias, targetDeptId]);
 
   const MY_DEPT = "Gerencia Nacional de Tecnologias de la informacion y la comunicacion";
 
   const filteredDocs = documents.filter(doc => {
-    // 0. Workflow Logic: Inbox vs Sent
-    // Inbox: Target is current dept
-    // Sent: Source is current dept
-    const myDept = MY_DEPT;
+    const myDept = userDept;
+
+    // LOGICA CORREGIDA DE FILTRADO (ID + STRICT MATCH)
+    const canViewAll = hasPermission(PERMISSIONS_MASTER.DOCS_VIEW_ALL);
+    const canViewDept = hasPermission(PERMISSIONS_MASTER.DOCS_VIEW_DEPT);
 
     if (docView === 'inbox') {
-      if (userRole === 'user' && doc.targetDepartment !== myDept) return false;
+      // BANDEJA DE ENTRADA: Documentos donde SOY EL RECEPTOR o MI GERENCIA es la RECEPTORA
+      // Si soy admin (canViewAll), veo todo.
+      if (!canViewAll) {
+         // Si tengo permiso de ver mi DEPTO, veo docs donde targetDept == myUserDept
+         if (canViewDept) {
+             // Normalizamos strings para comparar
+             const docTarget = (doc.targetDepartment || "").toLowerCase().trim();
+             const userTarget = (user?.gerencia_depto || "").toLowerCase().trim();
+             // Coincidencia laxa por nombre
+             if (docTarget !== userTarget) return false; 
+         } else {
+             // Si soy usuario raso, solo veo donde YO soy el receptor directo
+             // TODO: Verificar si backend envía 'receptor_id' o nombre. Por ahora comparamos nombre.
+             const docReceiver = (doc.receivedBy || "").toLowerCase();
+             const userName = (user?.nombre + " " + user?.apellido).toLowerCase();
+             
+             // Fail safe: si no coincide nombre exacto, ocultar.
+             if (!docReceiver.includes(userName)) return false;
+         }
+      }
     } else {
-      if (userRole === 'user' && doc.department !== myDept) return false;
+      // ENVIADOS: Documentos donde YO soy el REMITENTE
+      if (!canViewAll) {
+          const docSender = (doc.uploadedBy || "").toLowerCase();
+          const userName = (user?.nombre + " " + user?.apellido).toLowerCase();
+          if (!docSender.includes(userName)) return false;
+      }
     }
 
-    // 1. Filter by Status
     if (filterStatus !== 'all' && doc.signatureStatus !== filterStatus) return false;
-
-    // 2. Filter by Dept (Only relevant for admin viewing everything)
-    if (userRole === 'admin' && filterDept !== 'all' && doc.department !== filterDept && doc.targetDepartment !== filterDept) return false;
-
-    // 3. Search
+    // Fix: usar filtro de gerencia solo si es admin
+    if (hasPermission(PERMISSIONS_MASTER.VIEW_SECURITY) && filterDept !== 'all') {
+        const docOrigin = (doc.department || "").toLowerCase();
+        const docTarget = (doc.targetDepartment || "").toLowerCase();
+        const filter = filterDept.toLowerCase();
+        if (docOrigin !== filter && docTarget !== filter) return false;
+    }
+    
     if (searchTerm && !doc.name.toLowerCase().includes(searchTerm.toLowerCase()) && !doc.idDoc.toLowerCase().includes(searchTerm.toLowerCase())) return false;
-
     return true;
   });
 
   const updateDocumentStatus = async (id: number, newStatus: Document['signatureStatus']) => {
-    const doc = documents.find(d => d.id === id);
-    if (!doc) return;
-
-    setDocuments(prev => prev.map(d =>
-      d.id === id ? { ...d, signatureStatus: newStatus, receivedBy: newStatus === 'en-proceso' ? `Recibido por ${MY_DEPT}` : d.receivedBy } : d
-    ));
-
-    await logDocumentActivity({
-      username: userRole === 'admin' ? "Admin. General" : "Usuario Estándar",
-      evento: 'FLUJO DOCUMENTAL',
-      detalles: `Cambio de estado en "${doc.name}" a ${newStatus.toUpperCase()}`,
-      estado: newStatus === 'aprobado' ? 'success' : newStatus === 'rechazado' ? 'danger' : 'info'
-    });
+    try {
+      await apiUpdateStatus(id, newStatus);
+      refreshDocs();
+      await logDocumentActivity({
+        username: userRole === 'CEO' ? "Admin. General" : "Usuario Estándar",
+        evento: 'FLUJO DOCUMENTAL',
+        detalles: `Cambio de estado en documento ID ${id} a ${newStatus.toUpperCase()}`,
+        estado: newStatus === 'aprobado' ? 'success' : newStatus === 'rechazado' ? 'danger' : 'info'
+      });
+    } catch (e) {
+      console.error("Error updating status", e);
+      alert("Error al actualizar el estado del documento.");
+    }
   };
 
   const handleUploadClick = () => {
@@ -835,6 +827,13 @@ const DocumentManager: React.FC<{
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Hardened Validation: Only PDF allowed
+    if (file.type !== 'application/pdf') {
+      alert("Error: Solo se permiten archivos en formato PDF.");
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
     setSelectedFile(file);
     setDocName(file.name);
     setShowUploadModal(true);
@@ -844,62 +843,51 @@ const DocumentManager: React.FC<{
     e.preventDefault();
     if (!selectedFile) return;
 
-    const fileUrl = URL.createObjectURL(selectedFile);
-    const newDoc: Document = {
-      id: Date.now(),
-      idDoc: `DOC-2026-${String(documents.length + 1).padStart(3, '0')}`,
-      name: docName,
-      category: docCategory,
-      type: selectedFile.type.includes('pdf') ? 'pdf' : selectedFile.type.includes('word') ? 'word' : selectedFile.type.includes('excel') ? 'excel' : 'pdf',
-      size: `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`,
-      uploadedBy: sentBy,
-      receivedBy: "Pendiente de Recepción",
-      uploadDate: new Date().toLocaleDateString('es-ES'),
-      uploadTime: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-      signatureStatus: 'pendiente',
-      department: MY_DEPT, // Use unified long name
-      targetDepartment: targetDept,
-      fileUrl
-    };
+    const formData = new FormData();
+    formData.append('titulo', docName);
+    formData.append('correlativo', correlativo);
+    formData.append('tipo_documento', docCategory);
+    formData.append('prioridad', 'media'); // Default
+    formData.append('receptor_gerencia_id', targetDeptId);
+    // formData.append('receptor_id', targetUser); // Removed in favor of Gerencia
+    formData.append('archivo', selectedFile);
 
-    setDocuments(prev => [newDoc, ...prev]);
+    try {
+      await uploadDocumento(formData);
+      refreshDocs();
 
-    // Logging activity
-    await logDocumentActivity({
-      username: userRole === 'admin' ? "Admin. General" : "Usuario Estándar",
-      evento: 'GESTIÓN DOCUMENTAL',
-      detalles: `Envío de ${docCategory}: "${docName}" para ${targetDept}`,
-      estado: 'success'
-    });
+      await logDocumentActivity({
+        username: hasPermission(PERMISSIONS_MASTER.VIEW_SECURITY) ? "Admin. General" : "Usuario Estándar",
+        evento: 'GESTIÓN DOCUMENTAL',
+        detalles: `Subida de documento real: "${docName}"`,
+        estado: 'success'
+      });
 
-    // Reset and close
-    setShowUploadModal(false);
-    setSelectedFile(null);
-    setDocName('');
-    setSentBy('');
-    setDocCategory('Informe');
-    setTargetDept('Gerencia General');
-    if (fileInputRef.current) fileInputRef.current.value = '';
-
-    alert(`Documento "${docName}" enviado con éxito a ${targetDept}.`);
+      setShowUploadModal(false);
+      setSelectedFile(null);
+      setDocName('');
+      setCorrelativo('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      alert(`Documento "${docName}" subido con éxito.`);
+    } catch (e) {
+      console.error("Error uploading document:", e);
+      alert("Error al subir el documento al servidor.");
+    }
   };
+
+  const myDept = userDept;
 
   const viewDocument = (doc: Document) => {
     if (doc.fileUrl) {
       window.open(doc.fileUrl, '_blank');
     } else {
-      alert("Este es un documento de ejemplo. Por favor, suba un archivo nuevo para probar la visualización.");
+      alert("Este es un documento de ejemplo sin archivo físico.");
     }
   };
 
   const getFileIcon = (type: string) => {
-    switch (type) {
-      case 'pdf': return <File size={18} className="text-red-500" />;
-      case 'word': return <FileText size={18} className="text-blue-500" />;
-      case 'excel': return <FileText size={18} className="text-green-500" />;
-      case 'powerpoint': return <FileText size={18} className="text-amber-500" />;
-      default: return <File size={18} />;
-    }
+    // Only PDF icons after hardening
+    return <FileText size={18} className="text-red-500" />;
   };
 
   const getSignatureStatus = (status: string) => {
@@ -920,7 +908,7 @@ const DocumentManager: React.FC<{
         ref={fileInputRef}
         onChange={handleFileChange}
         className="hidden"
-        accept=".pdf,.doc,.docx,.xls,.xlsx"
+        accept=".pdf"
       />
 
       {/* Upload Modal */}
@@ -928,16 +916,10 @@ const DocumentManager: React.FC<{
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-md p-4 animate-in fade-in duration-300">
           <div className={`w-full max-w-lg rounded-2xl border shadow-2xl overflow-hidden ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white'}`}>
             <div className="p-6 border-b flex justify-between items-center bg-green-700 text-white">
-              <h2 className="font-bold flex items-center gap-2 uppercase tracking-tight">
+              <h2 className="font-bold flex items-center gap-2 uppercase tracking-tight text-white">
                 <FileCheck size={20} />
                 REGISTRAR DOCUMENTO
               </h2>
-              <button
-                onClick={() => { setShowUploadModal(false); setSelectedFile(null); }}
-                className="text-white/80 hover:text-white text-2xl"
-              >
-                &times;
-              </button>
             </div>
             <form onSubmit={confirmUpload} className="p-6 space-y-4">
               <div>
@@ -977,23 +959,49 @@ const DocumentManager: React.FC<{
                   />
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 tracking-wider">Fecha / Hora de Registro</label>
+                  <div className={`w-full px-4 py-2.5 rounded-lg border text-sm opacity-70 ${darkMode ? 'bg-slate-950 border-slate-700 text-slate-400' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>
+                    {new Date().toLocaleDateString('es-ES')} {new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 tracking-wider">Correlativo (Máx 15 chars)</label>
+                  <input
+                    required
+                    maxLength={15}
+                    value={correlativo}
+                    onChange={(e) => setCorrelativo(e.target.value)}
+                    placeholder="Ej: COR-2026-001"
+                    className={`w-full px-4 py-2.5 rounded-lg border outline-none text-sm ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
+                  />
+                </div>
+              </div>
+              {/* Department Selection */}
               <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1 tracking-wider">Gerencia de Destino</label>
-                <select
-                  value={targetDept}
-                  onChange={(e) => setTargetDept(e.target.value)}
-                  className={`w-full px-4 py-2.5 rounded-lg border outline-none text-sm ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-200'}`}
-                >
-                  {departments.map(dept => (
-                    <option key={dept} value={dept}>{dept}</option>
-                  ))}
-                </select>
+                <label className={`block text-xs font-bold uppercase tracking-wider mb-1 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  Gerencia Receptora (Destinatario)
+                </label>
+                <div className="relative">
+                  <Building2 className={`absolute left-3 top-1/2 -translate-y-1/2 ${darkMode ? 'text-slate-500' : 'text-slate-400'}`} size={18} />
+                  <select
+                    className={`w-full pl-10 pr-4 py-2 rounded-lg border text-sm font-medium transition-colors appearance-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200 text-slate-700'}`}
+                    value={targetDeptId}
+                    onChange={(e) => setTargetDeptId(e.target.value)}
+                  >
+                    {gerencias.map(g => (
+                      <option key={g.id} value={g.id}>{g.nombre}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className={`absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none ${darkMode ? 'text-slate-500' : 'text-slate-400'}`} size={16} />
+                </div>
               </div>
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
                   onClick={() => { setShowUploadModal(false); setSelectedFile(null); }}
-                  className={`flex-1 py-3 rounded-lg font-bold text-xs tracking-widest border ${darkMode ? 'border-slate-800 text-slate-400 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  className={`flex-1 py-3 rounded-lg font-bold text-xs tracking-widest border transition-all ${darkMode ? 'border-slate-800 text-slate-400 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                 >
                   CANCELAR
                 </button>
@@ -1010,45 +1018,38 @@ const DocumentManager: React.FC<{
       )}
 
       <div className="flex justify-between items-center mb-2">
-        <div className={`flex p-1 rounded-lg border ${darkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'}`}>
+        <div className={`flex p-1 rounded-lg border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-100 border-slate-200'}`}>
           <button
             onClick={() => setDocView('inbox')}
-            className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-2 ${docView === 'inbox' ? (darkMode ? 'bg-red-600 text-white' : 'bg-red-700 text-white') : (darkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-600 hover:text-slate-900')}`}
+            className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-2 ${docView === 'inbox' ? 'bg-red-700 text-white' : (darkMode ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900')}`}
           >
             <Inbox size={14} />
             BANDEJA DE ENTRADA
-            {documents.filter(d => d.targetDepartment === MY_DEPT && d.signatureStatus === 'pendiente').length > 0 && (
-              <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse ml-1" />
-            )}
           </button>
           <button
             onClick={() => setDocView('sent')}
-            className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-2 ${docView === 'sent' ? (darkMode ? 'bg-red-600 text-white' : 'bg-red-700 text-white') : (darkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-600 hover:text-slate-900')}`}
+            className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-2 ${docView === 'sent' ? 'bg-red-700 text-white' : (darkMode ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900')}`}
           >
             <Send size={14} />
             ENVIADOS
           </button>
         </div>
         <div className="flex gap-2">
-          <button className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${darkMode ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
-            <Download size={16} className="inline mr-2" />
-            Descargar Todo
-          </button>
-          <button
-            onClick={handleUploadClick}
-            className={`px-4 py-2 rounded-md text-sm font-medium ${darkMode ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-green-700 text-white hover:bg-green-800'}`}
-          >
-            + Nuevo Documento
-          </button>
+          {hasPermission(PERMISSIONS_MASTER.DOCS_UPLOAD) && (
+            <button
+              onClick={handleUploadClick}
+              className={`px-4 py-2 rounded-md text-sm font-medium ${darkMode ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-green-700 text-white hover:bg-green-800'}`}
+            >
+              + Nuevo Documento
+            </button>
+          )}
         </div>
       </div>
 
       {/* Filters */}
       <div className={`p-4 rounded-lg flex flex-wrap gap-4 items-end ${darkMode ? 'bg-slate-900/50 border border-slate-800' : 'bg-slate-50 border border-slate-200'}`}>
-
-        {/* Filter: Search */}
         <div className="flex-1 min-w-[200px]">
-          <label className={`block text-xs font-bold uppercase mb-1 ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>Búsqueda</label>
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Búsqueda</label>
           <div className={`flex items-center px-3 py-2 rounded-md border ${darkMode ? 'bg-slate-950 border-slate-700' : 'bg-white border-slate-300'}`}>
             <Search size={14} className="text-slate-500 mr-2" />
             <input
@@ -1059,38 +1060,36 @@ const DocumentManager: React.FC<{
             />
           </div>
         </div>
-
-        {/* Filter: Status */}
         <div className="w-48">
-          <label className={`block text-xs font-bold uppercase mb-1 ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>Estado</label>
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Estado</label>
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
             className={`w-full px-3 py-2 rounded-md border text-sm outline-none cursor-pointer ${darkMode ? 'bg-slate-950 border-slate-700 text-slate-300' : 'bg-white border-slate-300 text-slate-700'}`}
           >
             <option value="all">Todos los Estados</option>
-            <option value="aprobado">Aprobados</option>
-            <option value="omitido">Omitidos</option>
-            <option value="en-proceso">En Proceso</option>
             <option value="pendiente">Pendientes</option>
+            <option value="en-proceso">En Proceso</option>
+            <option value="aprobado">Aprobados</option>
             <option value="rechazado">Rechazados</option>
+            <option value="omitido">Omitidos</option>
           </select>
         </div>
-
-        {/* Filter: Gerencia (Dept) */}
-        <div className="w-48">
-          <label className={`block text-xs font-bold uppercase mb-1 ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>Gerencia</label>
-          <select
-            value={filterDept}
-            onChange={(e) => setFilterDept(e.target.value)}
-            className={`w-full px-3 py-2 rounded-md border text-sm outline-none cursor-pointer ${darkMode ? 'bg-slate-950 border-slate-700 text-slate-300' : 'bg-white border-slate-300 text-slate-700'}`}
-          >
-            <option value="all">Todas las Gerencias</option>
-            {departments.map(dept => (
-              <option key={dept} value={dept}>{dept}</option>
-            ))}
-          </select>
-        </div>
+        {hasPermission(PERMISSIONS_MASTER.VIEW_SECURITY) && (
+          <div className="w-48">
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Gerencia</label>
+            <select
+              value={filterDept}
+              onChange={(e) => setFilterDept(e.target.value)}
+              className={`w-full px-3 py-2 rounded-md border text-sm outline-none cursor-pointer ${darkMode ? 'bg-slate-950 border-slate-700 text-slate-300' : 'bg-white border-slate-300 text-slate-700'}`}
+            >
+              <option value="all">Todas las Gerencias</option>
+              {departments.map(dept => (
+                <option key={dept} value={dept}>{dept}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -1098,102 +1097,75 @@ const DocumentManager: React.FC<{
         <table className={`w-full ${darkMode ? 'bg-slate-900' : 'bg-white'}`}>
           <thead className={`${darkMode ? 'bg-slate-950/50' : 'bg-slate-50'} border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
             <tr>
-              <th className={`px-4 py-3 text-left text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>ID / Documento</th>
-              <th className={`px-4 py-3 text-left text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Fecha / Hora</th>
-              <th className={`px-4 py-3 text-left text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{docView === 'inbox' ? 'Remitente' : 'Destinatario'}</th>
-              <th className={`px-4 py-3 text-left text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Estado / Firma</th>
-              <th className={`px-4 py-3 text-center text-xs font-bold uppercase tracking-wider ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Acciones</th>
+              <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Documento</th>
+              <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Correlativo</th>
+              <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Fecha / Hora</th>
+              <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Gerencia Receptora</th>
+              <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Estado</th>
+              <th className="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider text-slate-500">Acciones</th>
             </tr>
           </thead>
           <tbody className={`divide-y ${darkMode ? 'divide-slate-800' : 'divide-slate-200'}`}>
             {filteredDocs.map((doc) => {
               const statusInfo = getSignatureStatus(doc.signatureStatus);
               const StatusIcon = statusInfo.icon;
-
               return (
                 <tr key={doc.id} className={`transition-colors ${darkMode ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}>
-                  {/* ID / Titulo */}
                   <td className="px-4 py-3">
                     <div className="flex items-start gap-3">
                       <div className={`mt-1 p-2 rounded-lg ${darkMode ? 'bg-slate-800' : 'bg-slate-100'}`}>
                         {getFileIcon(doc.type)}
                       </div>
                       <div>
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <div className={`font-mono text-[9px] uppercase px-1 rounded border ${darkMode ? 'border-blue-900 text-blue-400 bg-blue-900/20' : 'border-blue-200 text-blue-600 bg-blue-50'}`}>{doc.idDoc}</div>
-                          <div className={`text-[9px] font-extrabold uppercase px-1 rounded border ${darkMode ? 'border-slate-700 text-slate-400 bg-slate-800' : 'border-slate-200 text-slate-500 bg-slate-100'}`}>{doc.category}</div>
-                        </div>
-                        <div className={`font-bold text-sm ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>{doc.name}</div>
-                        <div className={`text-xs ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>{doc.size} • {doc.type.toUpperCase()}</div>
+                        <div className="font-bold text-sm text-slate-200">{doc.name}</div>
+                        <div className="text-xs text-slate-500">{doc.category}</div>
                       </div>
                     </div>
                   </td>
-
-                  {/* Fecha / Hora */}
-                  <td className="px-4 py-3">
-                    <div className="flex flex-col">
-                      <span className={`text-sm font-medium ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>{doc.uploadDate}</span>
-                      <span className={`text-xs ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>{doc.uploadTime}</span>
+                  <td className="px-4 py-3 text-sm font-mono text-slate-400">
+                    {doc.correlativo || "N/A"}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-slate-400">
+                    {doc.uploadDate} {doc.uploadTime}
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center">
+                      <div className={`p-2 rounded-full mr-3 ${darkMode ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                        <Building2 size={16} className={darkMode ? 'text-indigo-400' : 'text-indigo-600'} />
+                      </div>
+                      <div>
+                        {/* Mostrar Gerencia Destino + Nombre Receptor si existe (o 'Pendiente') */}
+                        <div className={`text-sm font-medium ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                          {doc.receptor_gerencia_nombre || doc.targetDepartment || "Sin Asignar"}
+                        </div>
+                        <div className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                          {doc.receivedBy !== "Pendiente" ? doc.receivedBy : "Por Asignar"}
+                        </div>
+                      </div>
                     </div>
                   </td>
-
-                  {/* Remitente / Destinatario */}
                   <td className="px-4 py-3">
-                    <div className="flex flex-col">
-                      <span className={`text-sm font-medium ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-                        {docView === 'inbox' ? doc.uploadedBy : doc.receivedBy}
-                      </span>
-                      <span className={`text-xs ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                        {docView === 'inbox' ? doc.department : doc.targetDepartment}
-                      </span>
-                    </div>
-                  </td>
-
-                  {/* Estado */}
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${statusInfo.color} ${darkMode ? 'border-transparent' : 'border-transparent'}`}>
+                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold ${statusInfo.color}`}>
                       <StatusIcon size={12} />
-                      {statusInfo.label}
+                      {statusInfo.label.toUpperCase()}
                     </span>
                   </td>
-
-                  {/* Acciones */}
                   <td className="px-4 py-3 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      {docView === 'inbox' && doc.signatureStatus === 'pendiente' && (
-                        <button
-                          onClick={() => updateDocumentStatus(doc.id, 'en-proceso')}
-                          className={`p-2 rounded-lg ${darkMode ? 'bg-blue-600/20 text-blue-400 hover:bg-blue-600/40' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
-                          title="Confirmar Recepción"
-                        >
-                          <Inbox size={16} />
-                        </button>
+                    <div className="flex items-center justify-center gap-2">
+                      {docView === 'inbox' && doc.signatureStatus === 'pendiente' && hasPermission(PERMISSIONS_MASTER.DOCS_ACTION_RECEIVE) && (
+                        <button onClick={() => updateDocumentStatus(doc.id, 'en-proceso')} className="p-1.5 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/40" title="Recibir"><Inbox size={14} /></button>
                       )}
                       {docView === 'inbox' && doc.signatureStatus === 'en-proceso' && (
                         <>
-                          <button
-                            onClick={() => updateDocumentStatus(doc.id, 'aprobado')}
-                            className={`p-2 rounded-lg ${darkMode ? 'bg-green-600/20 text-green-400 hover:bg-green-600/40' : 'bg-green-50 text-green-700 hover:bg-green-100'}`}
-                            title="Aprobar / Firmar"
-                          >
-                            <CheckCircle size={16} />
-                          </button>
-                          <button
-                            onClick={() => updateDocumentStatus(doc.id, 'rechazado')}
-                            className={`p-2 rounded-lg ${darkMode ? 'bg-red-600/20 text-red-400 hover:bg-red-600/40' : 'bg-red-50 text-red-700 hover:bg-red-100'}`}
-                            title="Rechazar"
-                          >
-                            <X size={16} />
-                          </button>
+                          {hasPermission(PERMISSIONS_MASTER.DOCS_ACTION_APPROVE) && (
+                            <button onClick={() => updateDocumentStatus(doc.id, 'aprobado')} className="p-1.5 rounded bg-green-600/20 text-green-400 hover:bg-green-600/40" title="Aprobar"><CheckCircle size={14} /></button>
+                          )}
+                          {hasPermission(PERMISSIONS_MASTER.DOCS_ACTION_REJECT) && (
+                            <button onClick={() => updateDocumentStatus(doc.id, 'rechazado')} className="p-1.5 rounded bg-red-600/20 text-red-400 hover:bg-red-600/40" title="Rechazar"><X size={14} /></button>
+                          )}
                         </>
                       )}
-                      <button
-                        onClick={() => viewDocument(doc)}
-                        className={`p-2 rounded-lg transition-all ${darkMode ? 'hover:bg-slate-700 text-slate-400 hover:text-white' : 'hover:bg-slate-200 text-slate-500 hover:text-slate-900'}`}
-                        title="Ver Documento"
-                      >
-                        <Eye size={18} />
-                      </button>
+                      <button onClick={() => viewDocument(doc)} className="p-1.5 rounded hover:bg-slate-800 text-slate-400" title="Ver"><Eye size={16} /></button>
                     </div>
                   </td>
                 </tr>
@@ -1202,121 +1174,20 @@ const DocumentManager: React.FC<{
           </tbody>
         </table>
         {filteredDocs.length === 0 && (
-          <div className={`p-8 text-center ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-            <p>No se encontraron documentos con los filtros seleccionados.</p>
-          </div>
+          <div className="p-10 text-center text-slate-500 italic">No se encontraron documentos</div>
         )}
       </div>
     </div>
   );
 };
 
-const PrinterControl: React.FC<{ darkMode: boolean }> = ({ darkMode }) => {
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'operativo':
-        return { bg: darkMode ? 'bg-green-500/10' : 'bg-green-50', text: darkMode ? 'text-green-400' : 'text-green-700', icon: Check };
-      case 'mantenimiento':
-        return { bg: darkMode ? 'bg-blue-500/10' : 'bg-blue-50', text: darkMode ? 'text-blue-400' : 'text-blue-700', icon: Clock };
-      case 'fuera-servicio':
-        return { bg: darkMode ? 'bg-red-500/10' : 'bg-red-50', text: darkMode ? 'text-red-400' : 'text-red-700', icon: AlertOctagon };
-      default:
-        return { bg: '', text: '', icon: AlertOctagon };
-    }
-  };
 
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center pb-4 border-b border-slate-200/10">
-        <h2 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>
-          Control de Impresoras y Toners
-        </h2>
-        <button className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${darkMode ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-slate-300 text-slate-700 hover:bg-slate-50'
-          }`}>
-          <Printer size={16} className="inline mr-2" />
-          Generar Reporte
-        </button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {PRINTERS.map((printer) => {
-          const status = getStatusColor(printer.status);
-          const Icon = status.icon;
-
-          return (
-            <div
-              key={printer.id}
-              className={`rounded-lg border p-4 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-                }`}
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <h3 className={`font-bold text-sm ${darkMode ? 'text-slate-200' : 'text-slate-900'}`}>
-                    {printer.name}
-                  </h3>
-                  <p className={`text-xs ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                    {printer.model}
-                  </p>
-                </div>
-                <span className={`px-2 py-1 rounded text-xs font-bold flex items-center gap-1 ${status.bg
-                  } ${status.text}`}>
-                  <Icon size={12} />
-                  {printer.status.toUpperCase()}
-                </span>
-              </div>
-              <div className="space-y-3 mb-3">
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className={darkMode ? 'text-slate-400' : 'text-slate-500'}>Ubicación</span>
-                    <span className={darkMode ? 'text-slate-300' : 'text-slate-700'}>{printer.location}</span>
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className={darkMode ? 'text-slate-400' : 'text-slate-500'}>Nivel de Tóner</span>
-                    <span className={darkMode ? 'text-slate-300' : 'text-slate-700'}>{printer.tonerLevel}%</span>
-                  </div>
-                  <div className={`h-2 w-full rounded-full overflow-hidden ${darkMode ? 'bg-slate-800' : 'bg-slate-100'
-                    }`}>
-                    <div
-                      className={`h-full transition-all duration-500 rounded-full ${printer.tonerLevel > 50 ? 'bg-green-500' :
-                        printer.tonerLevel > 20 ? 'bg-amber-500' : 'bg-red-500'
-                        }`}
-                      style={{ width: `${printer.tonerLevel}%` }}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className={darkMode ? 'text-slate-400' : 'text-slate-500'}>Nivel de Papel</span>
-                    <span className={darkMode ? 'text-slate-300' : 'text-slate-700'}>{printer.paperLevel}%</span>
-                  </div>
-                  <div className={`h-2 w-full rounded-full overflow-hidden ${darkMode ? 'bg-slate-800' : 'bg-slate-100'
-                    }`}>
-                    <div
-                      className={`h-full transition-all duration-500 rounded-full ${printer.paperLevel > 50 ? 'bg-green-500' :
-                        printer.paperLevel > 20 ? 'bg-amber-500' : 'bg-red-500'
-                        }`}
-                      style={{ width: `${printer.paperLevel}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className={`text-xs p-2 rounded ${darkMode ? 'bg-slate-800' : 'bg-slate-50'
-                }`}>
-                <span className={darkMode ? 'text-slate-400' : 'text-slate-500'}>
-                  Último mantenimiento: {printer.lastMaintenance}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
-
-// Módulo importado desde archivo externo
-import SecurityModule from './security/page';
+// Módulo importado de forma dinámica para evitar errores de hidratación y mejorar carga de chunks
+import dynamic from 'next/dynamic';
+const SecurityModule = dynamic(() => import('./security/SecurityModule'), {
+  ssr: false,
+  loading: () => <div className="flex items-center justify-center p-20"><div className="w-8 h-8 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div></div>
+});
 
 const ChartsModule: React.FC<{
   darkMode: boolean;
@@ -1325,9 +1196,9 @@ const ChartsModule: React.FC<{
   orgStructure: OrgCategory[];
 }> = ({ darkMode, documents, tickets, orgStructure }) => {
   const [view, setView] = useState<'overview' | 'drilldown'>('overview');
-  const [selectedDept, setSelectedDept] = useState<string>('all');
+  const [selectedDetailDept, setSelectedDetailDept] = useState<string | null>(null);
 
-  // Dynamic data for Documents Status
+  // Dynamic data for Documents Status (Existing chart)
   const docStatusData = useMemo(() => {
     const counts = {
       aprobado: 0,
@@ -1349,7 +1220,7 @@ const ChartsModule: React.FC<{
     ].filter(d => d.value > 0);
   }, [documents]);
 
-  // Dynamic data for Ticket Priority
+  // Dynamic data for Ticket Priority (Existing chart)
   const ticketPriorityData = useMemo(() => {
     const counts = { ALTA: 0, MEDIA: 0, BAJA: 0 };
     tickets.forEach(t => {
@@ -1364,57 +1235,67 @@ const ChartsModule: React.FC<{
     ].filter(t => t.value > 0);
   }, [tickets]);
 
-  // Dynamic data for Drill-down (Documents and Tickets by Department)
-  const deptData = useMemo(() => {
-    const allItems = orgStructure.flatMap(group => group.items);
-    return allItems.map(deptName => {
-      const docsCount = documents.filter(d => d.department === deptName || d.targetDepartment === deptName).length;
-      const resolvedTickets = tickets.filter(t => t.area === deptName && t.status === 'RESUELTO').length;
-      // Efficiency calculation (just an example formula)
-      const efficiency = docsCount > 0 ? Math.min(100, Math.round((resolvedTickets / (docsCount || 1)) * 100) + 70) : 0;
+  // Get all departments list
+  const allDepartments = useMemo(() => {
+    return orgStructure.flatMap(group => group.items);
+  }, [orgStructure]);
 
-      return {
-        name: deptName,
-        docs: docsCount,
-        tickets: resolvedTickets,
-        efficiency: efficiency || 85 // Default if no data
-      };
-    });
-  }, [orgStructure, documents, tickets]);
+  const handleDeptSelect = (dept: string) => {
+    setSelectedDetailDept(dept);
+    // Ya estamos en drilldown, pero aseguramos
+    setView('drilldown');
+  };
 
-  const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+  const handleBackToGrid = () => {
+    setSelectedDetailDept(null);
+  };
+
+  const handleMainViewChange = (newView: 'overview' | 'drilldown') => {
+    setView(newView);
+    if (newView === 'overview') {
+      setSelectedDetailDept(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setView('overview')}
-            className={`px-4 py-2 rounded-md font-medium text-sm transition-all ${view === 'overview' ? 'bg-red-700 text-white' : (darkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200')}`}
-          >
-            Vista General
-          </button>
-          <button
-            onClick={() => setView('drilldown')}
-            className={`px-4 py-2 rounded-md font-medium text-sm transition-all ${view === 'drilldown' ? 'bg-red-700 text-white' : (darkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200')}`}
-          >
-            Desglose por Depto.
-          </button>
+      {!selectedDetailDept && (
+        <div className="flex justify-between items-center pb-4 border-b border-slate-200/10">
+          <div>
+            {view === 'overview' ? (
+              <>
+                <h1 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                  Módulo de Estadísticas y Gráficos
+                </h1>
+                <p className={`mt-1 text-sm ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  Visualización de datos estratégicos y métricas de desempeño.
+                </p>
+              </>
+            ) : (
+              <h1 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                Desglose por Departamento
+              </h1>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleMainViewChange('overview')}
+              className={`px-4 py-2 rounded-md font-medium text-sm transition-all ${view === 'overview' ? 'bg-red-700 text-white' : (darkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200')}`}
+            >
+              Vista General
+            </button>
+            <button
+              onClick={() => handleMainViewChange('drilldown')}
+              className={`px-4 py-2 rounded-md font-medium text-sm transition-all ${view === 'drilldown' ? 'bg-red-700 text-white' : (darkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200')}`}
+            >
+              Seleccionar Gerencia
+            </button>
+          </div>
         </div>
-        {view === 'drilldown' && (
-          <select
-            value={selectedDept}
-            onChange={(e) => setSelectedDept(e.target.value)}
-            className={`px-3 py-2 rounded-md border text-sm outline-none ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-200' : 'bg-white border-slate-300 text-slate-700'}`}
-          >
-            <option value="all">Todos los Departamentos</option>
-            {deptData.map(d => <option key={d.name} value={d.name}>{d.name}</option>)}
-          </select>
-        )}
-      </div>
+      )}
 
       {view === 'overview' ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in duration-500">
           {/* Chart 1: Document Status */}
           <div className={`p-6 rounded-lg border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
             <h3 className={`font-bold mb-6 text-center ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>ESTADO DE DOCUMENTOS</h3>
@@ -1479,60 +1360,24 @@ const ChartsModule: React.FC<{
           </div>
         </div>
       ) : (
-        <div className="space-y-6">
-          <div className={`p-6 rounded-lg border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <h3 className={`font-bold mb-6 ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>DESEMPEÑO POR DEPARTAMENTO</h3>
-            <div className="h-96">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={selectedDept === 'all' ? deptData : deptData.filter(d => d.name === selectedDept)}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#334155' : '#e2e8f0'} />
-                  <XAxis
-                    dataKey="name"
-                    stroke={darkMode ? '#94a3b8' : '#64748b'}
-                    fontSize={10}
-                    tickFormatter={(value) => value.length > 20 ? value.substring(0, 17) + '...' : value}
-                    interval={0}
-                    angle={-15}
-                    textAnchor="end"
-                    height={60}
-                  />
-                  <YAxis
-                    stroke={darkMode ? '#94a3b8' : '#64748b'}
-                    fontSize={12}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: darkMode ? '#0f172a' : '#fff',
-                      borderColor: darkMode ? '#1e293b' : '#e2e8f0',
-                      color: darkMode ? '#f1f5f9' : '#1e293b'
-                    }}
-                  />
-                  <Legend />
-                  <Bar dataKey="docs" name="Documentos Totales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="tickets" name="Tickets Resueltos" fill="#10b981" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {deptData.map((d, i) => (
-              <div key={i} className={`p-4 rounded-lg border flex flex-col justify-between ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-                <h4 className="font-bold text-xs mb-2 line-clamp-1 opacity-70 hover:opacity-100 transition-opacity cursor-help" title={d.name}>{d.name}</h4>
-                <div className="flex justify-between text-[10px] mb-1">
-                  <span className="text-slate-500">Eficiencia Real</span>
-                  <span className={d.efficiency > 80 ? "text-green-500" : "text-amber-500"}>{d.efficiency}%</span>
-                </div>
-                <div className="h-1.5 w-full bg-slate-200/20 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full transition-all duration-1000 ${d.efficiency > 80 ? 'bg-green-500' : 'bg-amber-500'}`}
-                    style={{ width: `${d.efficiency}%` }}
-                  ></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        // Drill-down View Logic
+        selectedDetailDept ? (
+          <DepartmentDetailView
+            departmentName={selectedDetailDept}
+            allDepartments={allDepartments}
+            documents={documents}
+            tickets={tickets}
+            darkMode={darkMode}
+            onBack={handleBackToGrid}
+            onDepartmentChange={handleDeptSelect}
+          />
+        ) : (
+          <DepartmentGrid
+            orgStructure={orgStructure}
+            darkMode={darkMode}
+            onSelectDepartment={handleDeptSelect}
+          />
+        )
       )}
     </div>
   );
@@ -1555,12 +1400,72 @@ export default function Dashboard() {
   const [expandedCategories, setExpandedCategories] = useState<number[]>([0, 1, 2, 3, 4]);
   const [selectedManagement, setSelectedManagement] = useState<string | null>(null);
 
-  // ROLE SELECTOR STATE
-  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
-  const [userRole, setUserRole] = useState<'admin' | 'user'>('admin');
+  const { user, logout, switchRole, hasPermission } = useAuth();
+  const userRole = user?.role || 'Usuario';
+  const isDev = userRole === 'Desarrollador';
+
+  // Granular Access Controls base on hasPermission (Permisos del Sistema Alfa 2026)
+  const canAccessSecurity = hasPermission(PERMISSIONS_MASTER.VIEW_SECURITY);
+  const canAccessStats = hasPermission(PERMISSIONS_MASTER.VIEW_STATS);
+  const canAccessTickets = hasPermission(PERMISSIONS_MASTER.VIEW_TICKETS);
+  const canAccessPriorities = hasPermission(PERMISSIONS_MASTER.VIEW_PRIORITIES);
+
+  // Action specific check
+  const isReadOnly = !hasPermission(PERMISSIONS_MASTER.DOCS_UPLOAD);
 
   // Lifted state for documents to share with SecurityModule
-  const [documents, setDocuments] = useState<Document[]>(INITIAL_DOCUMENTS);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
+  const [gerencias, setGerencias] = useState<any[]>([]);
+
+  const fetchDocuments = useCallback(async () => {
+    try {
+      const data = await getDocumentos();
+      // Map backend fields to frontend props
+      const mappedDocs = data.map((d: any) => ({
+        id: d.id,
+        idDoc: d.correlativo || `DOC-${d.id}`,
+        name: d.titulo,
+        category: d.tipo_documento,
+        type: 'pdf' as const,
+        size: "N/A",
+        uploadedBy: d.remitente_nombre || "Desconocido",
+        receivedBy: d.receptor_nombre || "Pendiente",
+        uploadDate: new Date(d.fecha_creacion).toLocaleDateString('es-ES'),
+        uploadTime: new Date(d.fecha_creacion).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
+        signatureStatus: d.estado as any,
+        department: d.remitente_nombre ? d.remitente_nombre.split(' - ')[1] : "N/A",
+        targetDepartment: d.receptor_nombre ? d.receptor_nombre.split(' - ')[1] : "N/A",
+        correlativo: d.correlativo,
+        fileUrl: d.url_archivo ? `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${d.url_archivo}` : undefined
+      }));
+      setDocuments(mappedDocs);
+    } catch (e) {
+      console.error("Error fetching documents", e);
+    }
+  }, []);
+
+  const fetchGerencias = useCallback(async () => {
+    try {
+      const data = await getGerencias();
+      setGerencias(data);
+    } catch (e) {
+      console.error("Error fetching gerencias", e);
+    }
+  }, []);
+
+  const fetchUsers = useCallback(async () => {
+    const data = await getAllUsers();
+    setUsers(data);
+  }, []);
+
+  useEffect(() => {
+    if (mounted) {
+      fetchDocuments();
+      fetchUsers();
+      fetchGerencias();
+    }
+  }, [mounted, fetchDocuments, fetchUsers, fetchGerencias]);
 
   // Lifted state for tickets
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -1569,13 +1474,26 @@ export default function Dashboard() {
   const [orgStructure, setOrgStructure] = useState<OrgCategory[]>([]);
 
   useEffect(() => {
-    const saved = localStorage.getItem('org_structure_data');
-    if (saved) {
-      setOrgStructure(JSON.parse(saved));
-    } else {
-      setOrgStructure(DEFAULT_ORG_STRUCTURE);
+    // ✅ REGLA DE VISIBILIDAD DE ESTRUCTURA
+    // Siempre partimos de la base completa para evitar quedarnos en un estado "recortado" (sliced)
+    let data = JSON.parse(JSON.stringify(DEFAULT_ORG_STRUCTURE));
+
+    // Si el usuario es Desarrollador, añadimos un canal exclusivo de categorías dev
+    if (userRole === 'Desarrollador') {
+      data.push({
+        category: "VI. Módulo de Desarrollo y Control Raíz",
+        icon: "Shield",
+        items: ["Gestión Directa", "Bypass de Sistema", "Logs de Auditoría", "Control de Dominios"]
+      });
     }
-  }, []);
+
+    // Hardened Constraint REMOVED: Allow full view based on seeded DB
+    // if (hasPermission(PERMISSIONS_MASTER.ORG_VIEW_LIMITED) && !hasPermission(PERMISSIONS_MASTER.ORG_VIEW_FULL)) {
+    //   data = data.slice(0, 4);
+    // }
+
+    setOrgStructure(data);
+  }, [userRole, user]);
 
   useEffect(() => {
     if (orgStructure.length > 0) {
@@ -1606,14 +1524,28 @@ export default function Dashboard() {
       }
     }
 
-    // Check for tab in URL
+    // Check for tab in URL and VALIDATE role permissions
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
     if (tab) {
-      setActiveTab(tab);
-      if (tab === 'seguridad') setActiveSection('dashboard');
+      // Security Validation: Only allow access if role permitted
+      let isAllowed = true;
+      if (tab === 'seguridad' && !canAccessSecurity) isAllowed = false;
+      if (tab === 'graficos' && !canAccessStats) isAllowed = false;
+      if (tab === 'prioridades' && !canAccessPriorities) isAllowed = false;
+      if (tab === 'tickets' && !canAccessTickets) isAllowed = false;
+
+      if (isAllowed) {
+        setActiveTab(tab);
+        if (tab === 'seguridad') setActiveSection('dashboard');
+      } else {
+        console.warn(`Intento de acceso no autorizado a la pestaña: ${tab}`);
+        setActiveTab('overview');
+        // Clean URL from malicious tab
+        window.history.replaceState({}, '', window.location.pathname);
+      }
     }
-  }, []);
+  }, [userRole]); // Re-run if userRole changes
 
   useEffect(() => {
     if (mounted) {
@@ -1621,17 +1553,17 @@ export default function Dashboard() {
     }
   }, [announcement, mounted]);
 
-  // Documents Persistence
-  useEffect(() => {
-    const saved = localStorage.getItem('dashboard_documents');
-    if (saved) {
-      try {
-        setDocuments(JSON.parse(saved));
-      } catch (e) {
-        console.error("Error loading documents", e);
-      }
-    }
-  }, []);
+  // Documents Persistence REMOVED: Always fetch fresh from API
+  // useEffect(() => {
+  //   const saved = localStorage.getItem('dashboard_documents');
+  //   if (saved) {
+  //     try {
+  //       setDocuments(JSON.parse(saved));
+  //     } catch (e) {
+  //       console.error("Error loading documents", e);
+  //     }
+  //   }
+  // }, []);
 
   useEffect(() => {
     if (mounted) {
@@ -1679,17 +1611,30 @@ export default function Dashboard() {
   }, [darkMode, mounted]);
 
   const stats = useMemo(() => {
-    if (userRole === 'user') {
+    if (userRole === 'Usuario') {
       return [
-        { title: "Mis Alertas", value: "1", subtext: "Requieren atención", icon: AlertTriangle, trend: "0", trendPositive: true },
-        { title: "Mis Tickets", value: "5", subtext: "Asignados a mí", icon: Tag, trend: "+1", trendPositive: true }
+        { title: "Mis Tickets", value: "3", subtext: "2 Abiertos / 1 Resuelto", icon: Tag, trend: "Limite: 3 activos" },
+        { title: "Mis Documentos", value: "12", subtext: "5 Recibidos / 7 Enviados", icon: FileText, trend: "+2 hoy" },
+        { title: "Mensajes Bot", value: "15", subtext: "Historial de chat", icon: Bell, trend: "Soporte activo" },
+        { title: "Nivel de Acceso", value: "Estándar", subtext: "Usuario TIC", icon: Shield, trend: "Verificado" }
       ];
     }
+
+    // Role check for full stats access
+    if (userRole === 'CEO' || userRole === 'Desarrollador') {
+      return [
+        { title: "Consumo Eléctrico", value: "1,245 MW", subtext: "Total Nacional", icon: Zap, trend: "+5.2%", trendPositive: false },
+        { title: "Personal Activo", value: "4,820", subtext: "En 12 plantas", icon: Users, trend: "+12", trendPositive: true },
+        { title: "Disponibilidad", value: "94.8%", subtext: "Media industrial", icon: Activity, trend: "+0.3%", trendPositive: true },
+        { title: "Presupuesto", value: "$2.4M", subtext: "Ejecución Q1 2026", icon: TrendingUp, trend: "75%", trendPositive: true }
+      ];
+    }
+
+    // Default for Administrativo
     return [
-      { title: "Total Departamentos", value: "23", subtext: "Estructura completa", icon: Building2, trend: "+2", trendPositive: true },
-      { title: "Unidades Operativas", value: "6", subtext: "Plantas activas", icon: Factory, trend: "0", trendPositive: true },
-      { title: "Alertas Activas", value: "3", subtext: "Requieren atención", icon: AlertTriangle, trend: "-1", trendPositive: true },
-      { title: "Disponibilidad", value: "91%", subtext: "Promedio general", icon: TrendingUp, trend: "+2%", trendPositive: true }
+      { title: "Tickets Totales", value: "124", subtext: "García asigned", icon: Tag, trend: "+15 hoy" },
+      { title: "Docs. Pendientes", value: "45", subtext: "Requieren firma", icon: FileText, trend: "Urgente" },
+      { title: "Incidentes", value: "3", subtext: "Reportados hoy", icon: AlertTriangle, trend: "-50%", trendPositive: true }
     ];
   }, [userRole]);
 
@@ -1706,32 +1651,42 @@ export default function Dashboard() {
   const renderContent = () => {
     switch (activeTab) {
       case 'prioridades':
-        return <PriorityMatrix darkMode={darkMode} userRole={userRole} />;
+        return canAccessPriorities ? <PriorityMatrix darkMode={darkMode} userRole={userRole} isReadOnly={isReadOnly} hasPermission={hasPermission} /> : <div className="text-center p-20 font-bold text-red-500">Acceso Restringido</div>;
       case 'tickets':
-        return <TicketSystem darkMode={darkMode} orgStructure={orgStructure} userRole={userRole} currentUser={userRole === 'admin' ? 'Admin. General' : 'Usuario Estándar'} tickets={tickets} setTickets={setTickets} />;
+        return canAccessTickets ? <TicketSystem darkMode={darkMode} orgStructure={orgStructure} userRole={userRole} userDept={user?.gerencia_depto || ""} currentUser={user?.nombre + ' ' + user?.apellido} tickets={tickets} setTickets={setTickets} hasPermission={hasPermission} /> : <div className="text-center p-20 font-bold text-red-500">Acceso Restringido</div>;
       case 'documentos':
         return <DocumentManager
           darkMode={darkMode}
           userRole={userRole}
+          userDept={user?.gerencia_depto || 'Usuario'}
           documents={documents}
           setDocuments={setDocuments}
           orgStructure={orgStructure}
+          hasPermission={hasPermission}
+          user={user}
+          users={users}
+          gerencias={gerencias}
+          refreshDocs={fetchDocuments}
         />;
-      case 'impresoras':
-        return <PrinterControl darkMode={darkMode} />;
       case 'seguridad':
-        return <SecurityModule
-          darkMode={darkMode}
-          announcement={announcement}
-          setAnnouncement={setAnnouncement}
-          documents={documents}
-          setDocuments={setDocuments}
-          userRole={userRole}
-          orgStructure={orgStructure}
-          setOrgStructure={setOrgStructure}
-        />;
+        return canAccessSecurity ? (
+          <SecurityModule
+            darkMode={darkMode}
+            announcement={announcement}
+            setAnnouncement={setAnnouncement}
+            documents={documents}
+            setDocuments={setDocuments}
+            userRole={userRole}
+            orgStructure={orgStructure}
+            setOrgStructure={setOrgStructure}
+          />
+        ) : <div className="text-center p-20 font-bold text-red-500">Acceso Restringido</div>;
       case 'graficos':
-        return <ChartsModule darkMode={darkMode} documents={documents} tickets={tickets} orgStructure={orgStructure} />;
+        return canAccessStats ? (
+          <ChartsModule darkMode={darkMode} documents={documents} tickets={tickets} orgStructure={orgStructure} />
+        ) : <div className="text-center p-20 font-bold text-red-500">Acceso Restringido</div>;
+      case 'permisos-dev':
+        return isDev ? <MasterPermissionPanel darkMode={darkMode} /> : <div className="text-center p-20 font-bold text-red-500">Acceso Restringido</div>;
       case 'overview':
       default:
         return (
@@ -1740,7 +1695,7 @@ export default function Dashboard() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
                 <h1 className={`text-3xl font-bold tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>
-                  ¡Bienvenido de nuevo, {userRole === 'admin' ? 'Admin. General' : 'Usuario Estándar'}!
+                  ¡Bienvenido de nuevo, {user?.nombre || 'Usuario'}!
                 </h1>
                 <p className={`mt-1 text-sm ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                   {new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
@@ -1852,231 +1807,239 @@ export default function Dashboard() {
   };
 
   return (
-    <div className={`min-h-screen ${theme.bg} ${theme.text} font-sans transition-colors duration-300`}>
-      {/* SIDEBAR */}
-      <aside className={`
+    <RoleGuard allowedRoles={['CEO', 'Administrativo', 'Usuario', 'Desarrollador']} redirectTo="/login">
+      <div className={`min-h-screen ${theme.bg} ${theme.text} font-sans transition-colors duration-300`}>
+        {/* SIDEBAR */}
+        <aside className={`
         fixed top-0 left-0 bottom-0 z-50 ${theme.sidebar} border-r transition-all duration-300
         ${collapsed ? 'w-16' : 'w-64'}
       `}>
-        <div className="flex flex-col h-full">
-          {/* HEADER SIDEBAR */}
-          <div className={`h-16 flex items-center ${collapsed ? 'justify-center' : 'px-6'} border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 flex items-center justify-center shrink-0">
-                <img src="/logo-rojo.png" alt="Corpoelec" className="w-full h-full object-contain" />
-              </div>
-              {!collapsed && (
-                <div className="flex flex-col leading-none">
-                  <span className={`font-bold text-sm tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>CORPOELEC</span>
-                  <span className={`text-[10px] font-medium tracking-wider mt-0.5 ${darkMode ? 'text-red-200' : 'text-red-700'}`}>INDUSTRIAL</span>
+          <div className="flex flex-col h-full">
+            {/* HEADER SIDEBAR */}
+            <div className={`h-16 flex items-center ${collapsed ? 'justify-center' : 'px-6'} border-b ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 flex items-center justify-center shrink-0">
+                  <img src="/logo-rojo.png" alt="Corpoelec" className="w-full h-full object-contain" />
                 </div>
-              )}
+                {!collapsed && (
+                  <div className="flex flex-col leading-none">
+                    <span className={`font-bold text-sm tracking-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>CORPOELEC</span>
+                    <span className={`text-[10px] font-medium tracking-wider mt-0.5 ${darkMode ? 'text-red-200' : 'text-red-700'}`}>INDUSTRIAL</span>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-          {/* NAVIGATION */}
-          <nav className="flex-1 p-3 space-y-1">
-            <SidebarItem
-              icon={Home}
-              label="Dashboard General"
-              active={activeSection === 'dashboard' && activeTab === 'overview'}
-              collapsed={collapsed}
-              darkMode={darkMode}
-              onClick={() => {
-                setActiveSection('dashboard');
-                setActiveTab('overview');
-              }}
-            />
-            <SidebarItem
-              icon={Flag}
-              label="Matriz de Prioridades"
-              active={activeSection === 'dashboard' && activeTab === 'prioridades'}
-              collapsed={collapsed}
-              darkMode={darkMode}
-              onClick={() => {
-                setActiveSection('dashboard');
-                setActiveTab('prioridades');
-              }}
-            />
-            <SidebarItem
-              icon={Tag}
-              label="Sistema de Tickets"
-              active={activeSection === 'dashboard' && activeTab === 'tickets'}
-              collapsed={collapsed}
-              darkMode={darkMode}
-              onClick={() => {
-                setActiveSection('dashboard');
-                setActiveTab('tickets');
-              }}
-            />
-            <SidebarItem
-              icon={FileText}
-              label="Gestor Documental"
-              active={activeSection === 'dashboard' && activeTab === 'documentos'}
-              collapsed={collapsed}
-              darkMode={darkMode}
-              onClick={() => {
-                setActiveSection('dashboard');
-                setActiveTab('documentos');
-              }}
-            />
-            {userRole === 'admin' && (
+            {/* NAVIGATION */}
+            <nav className="flex-1 p-3 space-y-1">
               <SidebarItem
-                icon={Printer}
-                label="Control de Impresoras"
-                active={activeSection === 'dashboard' && activeTab === 'impresoras'}
+                icon={Home}
+                label="Dashboard General"
+                active={activeSection === 'dashboard' && activeTab === 'overview'}
                 collapsed={collapsed}
                 darkMode={darkMode}
                 onClick={() => {
                   setActiveSection('dashboard');
-                  setActiveTab('impresoras');
+                  setActiveTab('overview');
                 }}
               />
-            )}
-            {userRole === 'admin' && (
+              {canAccessPriorities && (
+                <SidebarItem
+                  icon={Flag}
+                  label="Matriz de Prioridades"
+                  active={activeSection === 'dashboard' && activeTab === 'prioridades'}
+                  collapsed={collapsed}
+                  darkMode={darkMode}
+                  onClick={() => {
+                    setActiveSection('dashboard');
+                    setActiveTab('prioridades');
+                  }}
+                />
+              )}
+              {canAccessTickets && (
+                <SidebarItem
+                  icon={Tag}
+                  label="Sistema de Tickets"
+                  active={activeSection === 'dashboard' && activeTab === 'tickets'}
+                  collapsed={collapsed}
+                  darkMode={darkMode}
+                  onClick={() => {
+                    setActiveSection('dashboard');
+                    setActiveTab('tickets');
+                  }}
+                />
+              )}
               <SidebarItem
-                icon={Shield}
-                label="Módulo de Seguridad"
-                active={activeSection === 'dashboard' && activeTab === 'seguridad'}
+                icon={FileText}
+                label="Gestor Documental"
+                active={activeSection === 'dashboard' && activeTab === 'documentos'}
                 collapsed={collapsed}
                 darkMode={darkMode}
                 onClick={() => {
                   setActiveSection('dashboard');
-                  setActiveTab('seguridad');
+                  setActiveTab('documentos');
                 }}
               />
-            )}
-            {userRole === 'admin' && (
-              <SidebarItem
-                icon={BarChart2}
-                label="Gráficos"
-                active={activeTab === 'graficos'}
-                collapsed={collapsed}
-                darkMode={darkMode}
-                onClick={() => {
-                  setActiveSection('dashboard');
-                  setActiveTab('graficos');
-                }}
-              />
-            )}
-          </nav>
-          {/* FOOTER SIDEBAR */}
-          <div className={`p-3 border-t ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
-            <button
-              onClick={() => setCollapsed(!collapsed)}
-              className={`
+              {canAccessSecurity && (
+                <SidebarItem
+                  icon={Shield}
+                  label="Módulo de Seguridad"
+                  active={activeSection === 'dashboard' && activeTab === 'seguridad'}
+                  collapsed={collapsed}
+                  darkMode={darkMode}
+                  onClick={() => {
+                    setActiveSection('dashboard');
+                    setActiveTab('seguridad');
+                  }}
+                />
+              )}
+              {canAccessStats && (
+                <SidebarItem
+                  icon={BarChart2}
+                  label="Gráficos"
+                  active={activeTab === 'graficos'}
+                  collapsed={collapsed}
+                  darkMode={darkMode}
+                  onClick={() => {
+                    setActiveSection('dashboard');
+                    setActiveTab('graficos');
+                  }}
+                />
+              )}
+
+              {hasPermission(PERMISSIONS_MASTER.SYS_DEV_TOOLS) && (
+                <SidebarItem
+                  icon={Shield}
+                  label="Configuración Maestra"
+                  active={activeTab === 'permisos-dev'}
+                  collapsed={collapsed}
+                  darkMode={darkMode}
+                  onClick={() => {
+                    setActiveSection('dashboard');
+                    setActiveTab('permisos-dev');
+                  }}
+                />
+              )}
+            </nav>
+            {/* FOOTER SIDEBAR */}
+            <div className={`p-3 border-t ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+              <button
+                onClick={() => setCollapsed(!collapsed)}
+                className={`
                 w-full flex items-center justify-center h-9 rounded-md transition-colors
                 ${darkMode
-                  ? 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }
+                    ? 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }
               `}
-            >
-              <ChevronRight size={18} className={`transition-transform duration-300 ${!collapsed && 'rotate-180'}`} />
-            </button>
+              >
+                <ChevronRight size={18} className={`transition-transform duration-300 ${!collapsed && 'rotate-180'}`} />
+              </button>
+            </div>
           </div>
-        </div>
-      </aside>
-      {/* MAIN CONTENT */}
-      <main className={`transition-all duration-300 ${collapsed ? 'ml-16' : 'ml-64'}`}>
-        {/* TOP HEADER */}
-        <header className={`
-          sticky top-0 z-40 h-16 px-6 flex items-center justify-between ${theme.header} border-b
+        </aside>
+        {/* MAIN CONTENT */}
+        <main className={`transition-all duration-300 ${collapsed ? 'ml-16' : 'ml-64'} min-h-screen ${theme.bg} flex flex-col`}>
+          {/* TOP HEADER */}
+          <header className={`
+          sticky top-0 z-40 h-16 px-6 flex items-center justify-between ${theme.header} border-b shrink-0
         `}>
-          <div className="flex items-center gap-4">
-            <h2 className={`font-semibold text-sm ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>
-              Sistema de Gestión Institucional <span className="mx-2 text-slate-500">|</span> <span className="text-slate-500 font-normal">Alfa 2026 V-1.0</span>
-            </h2>
-          </div>
-          <div className="flex items-center gap-4">
-            <ThemeToggle darkMode={darkMode} onToggle={() => setDarkMode(!darkMode)} />
-            <div className={`h-6 w-px ${darkMode ? 'bg-slate-800' : 'bg-slate-300'}`} />
-            <div className="relative">
+            <div className="flex items-center gap-4">
+              <h2 className={`font-semibold text-sm ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                Sistema de Gestión Institucional <span className="mx-2 text-slate-500">|</span> <span className="text-slate-500 font-normal">Alfa 2026 V-1.0</span>
+              </h2>
+            </div>
+            <div className="flex items-center gap-4">
+              <ThemeToggle darkMode={darkMode} onToggle={() => setDarkMode(!darkMode)} />
+              <div className={`h-6 w-px ${darkMode ? 'bg-slate-800' : 'bg-slate-300'}`} />
               <div
-                onClick={() => setRoleMenuOpen(!roleMenuOpen)}
                 className="flex items-center gap-3 cursor-pointer hover:bg-slate-100/10 p-1 rounded-md transition-colors"
+                onClick={() => {
+                  if (confirm('¿Desea cerrar sesión?')) {
+                    logout();
+                  }
+                }}
               >
                 <div className="text-right hidden sm:block leading-tight">
                   <p className={`text-sm font-semibold ${darkMode ? 'text-slate-200' : 'text-slate-900'}`}>
-                    {userRole === 'admin' ? 'Admin. General' : 'Usuario Estándar'}
+                    {user?.nombre} {user?.apellido}
                   </p>
-                  <p className={`text-xs ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                    {userRole === 'admin' ? 'Gerencia TI' : 'Invitado'}
-                  </p>
+                  <div className="flex items-center justify-end gap-2">
+                    {userRole === 'Desarrollador' && (
+                      <span className="text-[10px] font-black bg-red-600 text-white px-1.5 py-0.5 rounded animate-pulse">
+                        DEV MODE
+                      </span>
+                    )}
+                    <p className={`text-xs ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>
+                      {userRole.toUpperCase()}
+                    </p>
+                  </div>
                 </div>
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold ring-2 ring-offset-2 ring-offset-transparent ring-slate-200/20 ${userRole === 'admin' ? 'bg-red-800' : 'bg-blue-600'}`}>
-                  {userRole === 'admin' ? 'AG' : 'UE'}
+
+                {/* ROLE SWITCHER dropdown - visible for admins and persona-switchers */}
+                {hasPermission(PERMISSIONS_MASTER.SYS_SWITCH_ROLE) && (
+                  <div className="flex items-center gap-1 border-l pl-3 border-slate-700 ml-1" onClick={(e) => e.stopPropagation()}>
+                    <select
+                      value={userRole}
+                      onChange={(e) => switchRole(e.target.value as UserRole)}
+                      className={`bg-transparent text-[10px] font-bold border rounded px-1 outline-none transition-colors ${darkMode ? 'border-zinc-700 text-zinc-400 focus:border-red-500' : 'border-slate-300 text-slate-600 focus:border-red-600'}`}
+                    >
+                      <option value="Usuario">USR</option>
+                      <option value="Administrativo">ADM</option>
+                      <option value="CEO">CEO</option>
+                      <option value="Desarrollador">DEV</option>
+                    </select>
+                  </div>
+                )}
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold ring-2 ring-offset-2 ring-offset-transparent ring-slate-200/20 ${userRole === 'CEO' ? 'bg-red-800' : userRole === 'Administrativo' ? 'bg-amber-600' : 'bg-blue-600'}`}>
+                  {user?.nombre?.substring(0, 1)}{user?.apellido?.substring(0, 1)}
                 </div>
               </div>
-
-              {/* DROPDOWN MENU */}
-              {roleMenuOpen && (
-                <div className={`absolute right-0 mt-2 w-48 rounded-md shadow-lg py-1 z-50 ring-1 ring-black ring-opacity-5 focus:outline-none ${darkMode ? 'bg-zinc-900 border border-zinc-700' : 'bg-white border border-slate-200'}`}>
-                  <button
-                    onClick={() => {
-                      setUserRole('admin');
-                      setRoleMenuOpen(false);
-                    }}
-                    className={`block w-full text-left px-4 py-2 text-sm ${userRole === 'admin' ? (darkMode ? 'bg-zinc-800 text-white' : 'bg-slate-100 text-slate-900') : (darkMode ? 'text-slate-300 hover:bg-zinc-800' : 'text-slate-700 hover:bg-slate-100')}`}
-                  >
-                    Administrador
-                  </button>
-                  <button
-                    onClick={() => {
-                      setUserRole('user');
-                      setRoleMenuOpen(false);
-                    }}
-                    className={`block w-full text-left px-4 py-2 text-sm ${userRole === 'user' ? (darkMode ? 'bg-zinc-800 text-white' : 'bg-slate-100 text-slate-900') : (darkMode ? 'text-slate-300 hover:bg-zinc-800' : 'text-slate-700 hover:bg-slate-100')}`}
-                  >
-                    Usuario
-                  </button>
-                </div>
-              )}
             </div>
+          </header>
+          {/* WORKSPACE */}
+          <div className="p-8 w-full max-w-[1600px] mx-auto space-y-8 flex-1">
+            {/* BREADCRUMB / TITLE */}
+            {/* BREADCRUMB / TITLE - Hidden on overview as it has its own welcome header, and on graficos as it has internal headers */}
+            {activeTab !== 'overview' && activeTab !== 'graficos' && activeTab !== 'permisos-dev' && (
+              <div className="flex justify-between items-center pb-6 border-b border-slate-200/10">
+                <div>
+                  <h1 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>
+                    {activeTab === 'prioridades' ? 'Matriz de Prioridades' :
+                      activeTab === 'tickets' ? 'Sistema de Tickets' :
+                        activeTab === 'documentos' ? 'Gestor Documental' :
+                          activeTab === 'seguridad' ? 'Módulo de Seguridad' :
+                            activeTab === 'impresoras' ? 'Control de Impresoras y Toners' :
+                              'Panel Detalle'}
+                  </h1>
+                  <p className={`mt-1 text-sm ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                    {activeTab === 'prioridades' ? 'Control y seguimiento de tareas prioritarias por gerencia.' :
+                      activeTab === 'tickets' ? 'Gestión de solicitudes técnicas y administrativas.' :
+                        activeTab === 'documentos' ? 'Administración de documentos institucionales y firmas.' :
+                          activeTab === 'seguridad' ? 'Gestión de usuarios, permisos y auditoría de seguridad.' :
+                            activeTab === 'impresoras' ? 'Monitoreo del estado operativo de impresoras y niveles de suministros.' :
+                              'Vista de detalles del módulo seleccionado.'}
+                  </p>
+                </div>
+              </div>
+            )}
+            {/* CONTENT AREA */}
+            {renderContent()}
           </div>
-        </header>
-        {/* WORKSPACE */}
-        <div className="p-8 max-w-7xl mx-auto space-y-8">
-          {/* BREADCRUMB / TITLE */}
-          {/* BREADCRUMB / TITLE - Hidden on overview as it has its own welcome header */}
-          {activeTab !== 'overview' && (
-            <div className="flex justify-between items-center pb-6 border-b border-slate-200/10">
-              <div>
-                <h1 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-slate-900'}`}>
-                  {activeTab === 'prioridades' ? 'Matriz de Prioridades' :
-                    activeTab === 'tickets' ? 'Sistema de Tickets' :
-                      activeTab === 'documentos' ? 'Gestor Documental' :
-                        activeTab === 'seguridad' ? 'Módulo de Seguridad' :
-                          activeTab === 'graficos' ? 'Módulo de Estadísticas y Gráficos' :
-                            'Control de Impresoras y Toners'}
-                </h1>
-                <p className={`mt-1 text-sm ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                  {activeTab === 'prioridades' ? 'Control y seguimiento de tareas prioritarias por gerencia.' :
-                    activeTab === 'tickets' ? 'Gestión de solicitudes técnicas y administrativas.' :
-                      activeTab === 'documentos' ? 'Administración de documentos institucionales y firmas.' :
-                        activeTab === 'seguridad' ? 'Gestión de usuarios, permisos y auditoría de seguridad.' :
-                          activeTab === 'graficos' ? 'Visualización de datos estratégicos y métricas de desempeño.' :
-                            'Monitoreo del estado operativo de impresoras y niveles de suministros.'}
-                </p>
-              </div>
-            </div>
-          )}
-          {/* CONTENT AREA */}
-          {renderContent()}
-        </div>
-      </main>
+        </main>
 
-      {/* ✅ INTEGRA EL BOT DE AYUDA AL FINAL DEL COMPONENTE */}
-      <BotButton onOpenChat={() => setIsChatOpen(true)} />
-      <ChatWindow isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
+        {/* ✅ INTEGRA EL BOT DE AYUDA AL FINAL DEL COMPONENTE */}
+        <BotButton onOpenChat={() => setIsChatOpen(true)} />
+        <ChatWindow isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} userRole={userRole} />
 
-      {/* MODAL DE DETALLE DE GERENCIA */}
-      <DetailModal
-        isOpen={!!selectedManagement}
-        onClose={() => setSelectedManagement(null)}
-        title={selectedManagement || ''}
-        functions={selectedManagement && MANAGEMENT_DETAILS[selectedManagement] ? MANAGEMENT_DETAILS[selectedManagement] : (selectedManagement ? getDefaultFunctions(selectedManagement) : [])}
-        darkMode={darkMode}
-      />
-    </div>
+        {/* MODAL DE DETALLE DE GERENCIA */}
+        <DetailModal
+          isOpen={!!selectedManagement}
+          onClose={() => setSelectedManagement(null)}
+          title={selectedManagement || ''}
+          functions={selectedManagement && MANAGEMENT_DETAILS[selectedManagement] ? MANAGEMENT_DETAILS[selectedManagement] : (selectedManagement ? getDefaultFunctions(selectedManagement) : [])}
+          darkMode={darkMode}
+        />
+      </div>
+    </RoleGuard>
   );
 }

@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Plus, Download, MoreVertical, UsersRound, Clock, CheckCircle, FileText } from 'lucide-react';
 import { logTicketActivity } from '@/app/dashboard/security/actions';
+import { UserRole } from '@/context/AuthContext';
 
 // --- Tipos & Interfaces ---
 type TicketStatus = 'ABIERTO' | 'EN-PROCESO' | 'RESUELTO';
@@ -19,23 +20,41 @@ export interface Ticket {
     createdAt: string;
     resolvedAt?: string;
     owner: string;
+    observations?: string;
 }
+
+const TECH_DEPT = "Gerencia Nacional de Tecnologias de la informacion y la comunicacion";
 
 export default function TicketSystem({
     darkMode,
     orgStructure = [],
     currentUser = 'Admin. General',
-    userRole = 'admin',
+    userRole = 'Usuario',
+    userDept = '',
     tickets = [],
-    setTickets
+    setTickets,
+    hasPermission
 }: {
     darkMode: boolean;
     orgStructure?: any[];
     currentUser?: string;
-    userRole?: 'admin' | 'user';
+    userRole?: UserRole;
+    userDept?: string;
     tickets?: Ticket[];
     setTickets: React.Dispatch<React.SetStateAction<Ticket[]>>;
+    hasPermission: (permission: string) => boolean;
 }) {
+    // Import inside if possible or via constants
+    const PERMISSIONS_MASTER = {
+        TICKETS_CREATE: 'TICKETS_CREATE',
+        TICKETS_EDIT: 'TICKETS_EDIT',
+        TICKETS_DELETE: 'TICKETS_DELETE',
+        TICKETS_VIEW_ALL: 'TICKETS_VIEW_ALL',
+        TICKETS_VIEW_DEPT: 'TICKETS_VIEW_DEPT',
+        TICKETS_MOVE_KANBAN: 'TICKETS_MOVE_KANBAN',
+        TICKETS_RESOLVE: 'TICKETS_RESOLVE',
+        VIEW_SECURITY: 'VIEW_SECURITY'
+    };
     const [filterArea, setFilterArea] = useState<string>('all');
     const [filterPriority, setFilterPriority] = useState<string>('all');
     const [searchTerm, setSearchTerm] = useState('');
@@ -51,14 +70,16 @@ export default function TicketSystem({
     // Form state
     const [newTitle, setNewTitle] = useState('');
     const [newDesc, setNewDesc] = useState('');
-    const [newArea, setNewArea] = useState<TicketArea>('');
-    useEffect(() => {
-        if (allAreas.length > 0 && !newArea) {
-            setNewArea(allAreas[0]);
-        }
-    }, [allAreas, newArea]);
+    const [newArea, setNewArea] = useState<TicketArea>(TECH_DEPT);
 
     const [newPriority, setNewPriority] = useState<TicketPriority>('MEDIA');
+    const [newObservations, setNewObservations] = useState('');
+
+    useEffect(() => {
+        if (allAreas.length > 0 && !newArea) {
+            setNewArea(TECH_DEPT);
+        }
+    }, [allAreas, newArea]);
 
     // Close menu on click outside
     useEffect(() => {
@@ -85,6 +106,7 @@ export default function TicketSystem({
         setNewDesc(ticket.description);
         setNewArea(ticket.area);
         setNewPriority(ticket.priority);
+        setNewObservations(ticket.observations || '');
         setShowModal(true);
         setMenuOpenId(null);
     };
@@ -92,6 +114,10 @@ export default function TicketSystem({
     // Handle Delete
     const deleteTicket = (e: React.MouseEvent, id: number) => {
         e.stopPropagation();
+        if (!hasPermission(PERMISSIONS_MASTER.TICKETS_DELETE)) {
+            alert("No tienes permiso para eliminar tickets.");
+            return;
+        }
         const ticket = tickets.find(t => t.id === id);
         if (ticket && confirm(`¿Estás seguro de que deseas eliminar el ticket "${ticket.title}"?`)) {
             setTickets(prev => prev.filter(t => t.id !== id));
@@ -103,8 +129,17 @@ export default function TicketSystem({
     // Filtrado
     const filteredTickets = useMemo(() => {
         return tickets.filter(t => {
-            // Role restriction: Users only see their own tickets
-            if (userRole === 'user' && t.owner !== currentUser) return false;
+            // Permission check for viewing
+            const canViewAll = hasPermission(PERMISSIONS_MASTER.TICKETS_VIEW_ALL);
+            const canViewDept = hasPermission(PERMISSIONS_MASTER.TICKETS_VIEW_DEPT);
+
+            if (!canViewAll) {
+                if (canViewDept) {
+                    if (t.area !== userDept) return false;
+                } else {
+                    if (t.owner !== currentUser) return false;
+                }
+            }
 
             const matchesSearch = t.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                 t.description.toLowerCase().includes(searchTerm.toLowerCase());
@@ -112,7 +147,7 @@ export default function TicketSystem({
             const matchesPriority = filterPriority === 'all' || t.priority === filterPriority;
             return matchesSearch && matchesArea && matchesPriority;
         });
-    }, [tickets, searchTerm, filterArea, filterPriority, userRole, currentUser]);
+    }, [tickets, searchTerm, filterArea, filterPriority, userRole, currentUser, userDept, hasPermission]);
 
     const updateStatus = (id: number, status: TicketStatus) => {
         const ticket = tickets.find(t => t.id === id);
@@ -139,7 +174,7 @@ export default function TicketSystem({
 
     const handleDrop = (e: React.DragEvent, status: TicketStatus) => {
         e.preventDefault();
-        if (userRole !== 'admin') return; // Prevent move if not admin
+        if (!hasPermission(PERMISSIONS_MASTER.TICKETS_MOVE_KANBAN)) return;
 
         const idString = e.dataTransfer.getData("ticketId");
         if (!idString) return;
@@ -160,22 +195,35 @@ export default function TicketSystem({
                         title: newTitle,
                         description: newDesc,
                         area: newArea,
-                        priority: newPriority
+                        priority: newPriority,
+                        observations: newObservations
                     };
                 }
                 return t;
             }));
         } else {
+            // Check for user limit (3 active tickets)
+            const activeTickets = tickets.filter(t =>
+                t.owner === currentUser &&
+                (t.status === 'ABIERTO' || t.status === 'EN-PROCESO')
+            ).length;
+
+            if (userRole === 'Usuario' && activeTickets >= 3) {
+                alert("Has alcanzado el límite máximo de 3 tickets activos. Por favor, espera a que tus tickets actuales sean procesados.");
+                return;
+            }
+
             // Create new
             const ticket: Ticket = {
                 id: Date.now(),
                 title: newTitle,
                 description: newDesc,
-                area: newArea,
-                priority: newPriority,
+                area: userRole === 'Usuario' ? (userDept || TECH_DEPT) : newArea,
+                priority: userRole === 'Usuario' ? 'MEDIA' : newPriority,
                 status: 'ABIERTO',
                 createdAt: new Date().toLocaleDateString('es-ES'),
-                owner: currentUser
+                owner: currentUser,
+                observations: newObservations
             };
             setTickets([ticket, ...tickets]);
             logAction('CREACIÓN', newTitle, 'success');
@@ -189,8 +237,9 @@ export default function TicketSystem({
         setEditingTicket(null);
         setNewTitle('');
         setNewDesc('');
-        setNewArea(allAreas[0] || '');
+        setNewArea(TECH_DEPT);
         setNewPriority('MEDIA');
+        setNewObservations('');
     };
 
     const openCreateModal = () => {
@@ -230,43 +279,49 @@ export default function TicketSystem({
                             className="bg-transparent border-none outline-none text-sm w-48 transition-all focus:w-64"
                         />
                     </div>
-                    <select
-                        value={filterArea}
-                        onChange={(e) => setFilterArea(e.target.value)}
-                        className={`px-3 py-2 rounded-lg border text-sm focus:outline-none ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}
-                    >
-                        <option value="all">Todas las Áreas</option>
-                        {allAreas.map(area => (
-                            <option key={area} value={area}>{area}</option>
-                        ))}
-                    </select>
-                    <select
-                        value={filterPriority}
-                        onChange={(e) => setFilterPriority(e.target.value)}
-                        className={`px-3 py-2 rounded-lg border text-sm focus:outline-none ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}
-                    >
-                        <option value="all">Prioridades</option>
-                        <option value="ALTA">Alta</option>
-                        <option value="MEDIA">Media</option>
-                        <option value="BAJA">Baja</option>
-                    </select>
+                    {hasPermission(PERMISSIONS_MASTER.TICKETS_VIEW_ALL) && (
+                        <>
+                            <select
+                                value={filterArea}
+                                onChange={(e) => setFilterArea(e.target.value)}
+                                className={`px-3 py-2 rounded-lg border text-sm focus:outline-none ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}
+                            >
+                                <option value="all">Todas las Áreas</option>
+                                {allAreas.map(area => (
+                                    <option key={area} value={area}>{area}</option>
+                                ))}
+                            </select>
+                            <select
+                                value={filterPriority}
+                                onChange={(e) => setFilterPriority(e.target.value)}
+                                className={`px-3 py-2 rounded-lg border text-sm focus:outline-none ${darkMode ? 'bg-slate-900 border-slate-700 text-slate-300' : 'bg-white border-slate-200 text-slate-700'}`}
+                            >
+                                <option value="all">Prioridades</option>
+                                <option value="ALTA">Alta</option>
+                                <option value="MEDIA">Media</option>
+                                <option value="BAJA">Baja</option>
+                            </select>
+                        </>
+                    )}
                 </div>
                 <div className="flex gap-2">
-                    <button
-                        onClick={openCreateModal}
-                        className="px-8 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-bold flex items-center gap-2 transition-all transform active:scale-95 shadow-lg shadow-red-900/40"
-                    >
-                        <Plus size={18} /> NUEVO TICKET
-                    </button>
+                    {hasPermission(PERMISSIONS_MASTER.TICKETS_CREATE) && (
+                        <button
+                            onClick={openCreateModal}
+                            className="px-8 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-bold flex items-center gap-2 transition-all transform active:scale-95 shadow-lg shadow-red-900/40"
+                        >
+                            <Plus size={18} /> NUEVO TICKET
+                        </button>
+                    )}
                 </div>
             </div>
 
             {/* Kanban Board */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-280px)] min-h-[600px]">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full min-h-[600px] pb-8">
                 {(['ABIERTO', 'EN-PROCESO', 'RESUELTO'] as TicketStatus[]).map((status) => (
                     <div
                         key={status}
-                        className={`flex flex-col rounded-xl border ${darkMode ? 'bg-slate-900/40 border-slate-800' : 'bg-slate-50/50 border-slate-200'}`}
+                        className={`flex flex-col rounded-xl border shadow-xl ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-100 border-slate-200'}`}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={(e) => handleDrop(e, status)}
                     >
@@ -286,7 +341,7 @@ export default function TicketSystem({
                             {filteredTickets.filter(t => t.status === status).map((ticket) => (
                                 <div
                                     key={ticket.id}
-                                    draggable={userRole === 'admin'}
+                                    draggable={hasPermission(PERMISSIONS_MASTER.TICKETS_MOVE_KANBAN)}
                                     onDragStart={(e) => handleDragStart(e, ticket.id)}
                                     className={`group relative p-4 rounded-lg border transition-all cursor-grab active:cursor-grabbing hover:shadow-lg ${darkMode
                                         ? 'bg-slate-900 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80'
@@ -308,18 +363,22 @@ export default function TicketSystem({
                                             {/* Context Menu */}
                                             {menuOpenId === ticket.id && (
                                                 <div className={`absolute right-0 top-full mt-1 w-32 rounded-lg shadow-xl z-20 border py-1 animate-in fade-in zoom-in duration-100 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                                                    <button
-                                                        onClick={(e) => startEdit(e, ticket)}
-                                                        className={`flex items-center gap-2 w-full px-3 py-2 text-xs font-semibold text-left transition-colors ${darkMode ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-50 text-slate-700'}`}
-                                                    >
-                                                        Editar
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => deleteTicket(e, ticket.id)}
-                                                        className={`flex items-center gap-2 w-full px-3 py-2 text-xs font-semibold text-left transition-colors text-red-500 ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-red-50'}`}
-                                                    >
-                                                        Eliminar
-                                                    </button>
+                                                    {hasPermission(PERMISSIONS_MASTER.TICKETS_EDIT) && (
+                                                        <button
+                                                            onClick={(e) => startEdit(e, ticket)}
+                                                            className={`flex items-center gap-2 w-full px-3 py-2 text-xs font-semibold text-left transition-colors ${darkMode ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-50 text-slate-700'}`}
+                                                        >
+                                                            Editar
+                                                        </button>
+                                                    )}
+                                                    {hasPermission(PERMISSIONS_MASTER.TICKETS_DELETE) && (
+                                                        <button
+                                                            onClick={(e) => deleteTicket(e, ticket.id)}
+                                                            className={`flex items-center gap-2 w-full px-3 py-2 text-xs font-semibold text-left transition-colors text-red-500 ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-red-50'}`}
+                                                        >
+                                                            Eliminar
+                                                        </button>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
@@ -327,15 +386,30 @@ export default function TicketSystem({
                                     <h3 className={`font-semibold text-sm mb-1 leading-tight ${darkMode ? 'text-white' : 'text-slate-900'}`}>{ticket.title}</h3>
                                     <p className={`text-xs mb-3 line-clamp-2 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>{ticket.description}</p>
 
-                                    <div className="flex flex-wrap gap-3 pt-3 border-t border-slate-800/50">
-                                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-medium font-mono uppercase tracking-tighter">
-                                            <UsersRound size={12} className="text-slate-400" />
-                                            {ticket.area}
+                                    <div className="flex flex-wrap gap-2 pt-3 border-t border-slate-800/30">
+                                        <div className="flex items-center gap-1.5 text-[9px] text-slate-500 font-bold font-mono uppercase tracking-tighter w-full overflow-hidden">
+                                            <UsersRound size={11} className="text-slate-400 shrink-0" />
+                                            <span className="truncate" title={ticket.area}>
+                                                {ticket.area.toLowerCase().includes('tecnologia') ? 'SOPORTE TÉCNICO' : ticket.area.substring(0, 25) + (ticket.area.length > 25 ? '...' : '')}
+                                            </span>
                                         </div>
-                                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-medium">
-                                            <Clock size={12} className="text-slate-400" />
-                                            {ticket.createdAt}
+                                        <div className="flex items-center gap-3 w-full">
+                                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-medium">
+                                                <Clock size={12} className="text-slate-400" />
+                                                {ticket.createdAt}
+                                            </div>
+                                            <div className="flex items-center gap-1.5 text-[10px] text-red-500/70 font-bold uppercase tracking-wider">
+                                                <div className="w-1 h-1 rounded-full bg-red-500" />
+                                                {ticket.owner ? ticket.owner.split(' ')[0] : 'S/I'}
+                                            </div>
                                         </div>
+                                        {ticket.observations && (
+                                            <div className="w-full mt-1 p-2 rounded bg-amber-500/5 border border-amber-500/10">
+                                                <p className="text-[10px] text-amber-500/80 italic leading-tight line-clamp-2">
+                                                    Obs: {ticket.observations}
+                                                </p>
+                                            </div>
+                                        )}
                                         {ticket.resolvedAt && (
                                             <div className="flex items-center gap-1.5 text-[10px] text-emerald-500 font-bold w-full mt-1 uppercase tracking-widest">
                                                 <CheckCircle size={12} />
@@ -343,6 +417,28 @@ export default function TicketSystem({
                                             </div>
                                         )}
                                     </div>
+
+                                    {/* Action Buttons for Admins */}
+                                    {ticket.status !== 'RESUELTO' && (
+                                        <div className="mt-4 pt-3 border-t border-slate-800/30 flex gap-2">
+                                            {ticket.status === 'ABIERTO' && hasPermission(PERMISSIONS_MASTER.TICKETS_EDIT) && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); updateStatus(ticket.id, 'EN-PROCESO'); }}
+                                                    className="flex-1 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold uppercase tracking-wider transition-colors"
+                                                >
+                                                    ATENDER
+                                                </button>
+                                            )}
+                                            {ticket.status === 'EN-PROCESO' && hasPermission(PERMISSIONS_MASTER.TICKETS_RESOLVE) && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); updateStatus(ticket.id, 'RESUELTO'); }}
+                                                    className="flex-1 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold uppercase tracking-wider transition-colors"
+                                                >
+                                                    RESOLVER
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                             {filteredTickets.filter(t => t.status === status).length === 0 && (
@@ -390,29 +486,44 @@ export default function TicketSystem({
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Área Responsable</label>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Área Destino</label>
                                     <select
+                                        disabled={!hasPermission(PERMISSIONS_MASTER.TICKETS_VIEW_ALL)}
                                         value={newArea}
                                         onChange={(e) => setNewArea(e.target.value)}
-                                        className={`w-full px-4 py-3 rounded-lg border outline-none cursor-pointer ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200'}`}
+                                        className={`w-full px-4 py-3 rounded-lg border outline-none cursor-pointer transition-all ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200'} ${!hasPermission(PERMISSIONS_MASTER.TICKETS_VIEW_ALL) ? 'opacity-70 cursor-not-allowed grayscale-[0.5]' : 'hover:border-red-500/50 focus:ring-2 focus:ring-red-500/20'}`}
                                     >
-                                        {allAreas.map(area => (
+                                        <option value={TECH_DEPT}>{TECH_DEPT}</option>
+                                        {allAreas.filter(a => a !== TECH_DEPT).map(area => (
                                             <option key={area} value={area}>{area}</option>
                                         ))}
                                     </select>
+                                    {userRole === 'Usuario' && <p className="text-[9px] text-slate-500 mt-1 uppercase font-bold">Reserva exclusiva para Soporte Técnico</p>}
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Prioridad</label>
                                     <select
+                                        disabled={!hasPermission(PERMISSIONS_MASTER.TICKETS_EDIT) && !editingTicket}
                                         value={newPriority}
                                         onChange={(e) => setNewPriority(e.target.value as TicketPriority)}
-                                        className={`w-full px-4 py-3 rounded-lg border outline-none cursor-pointer ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200'}`}
+                                        className={`w-full px-4 py-3 rounded-lg border outline-none cursor-pointer transition-all ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200'} ${(!hasPermission(PERMISSIONS_MASTER.TICKETS_EDIT) && !editingTicket) ? 'opacity-70 cursor-not-allowed grayscale-[0.5]' : 'hover:border-red-500/50 focus:ring-2 focus:ring-red-500/20'}`}
                                     >
                                         <option value="ALTA">Alta</option>
                                         <option value="MEDIA">Media</option>
                                         <option value="BAJA">Baja</option>
                                     </select>
                                 </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 tracking-wider">Observaciones (Soporte Técnico)</label>
+                                <textarea
+                                    disabled={!hasPermission(PERMISSIONS_MASTER.TICKETS_RESOLVE) && !hasPermission(PERMISSIONS_MASTER.TICKETS_EDIT)}
+                                    rows={2}
+                                    value={newObservations}
+                                    onChange={(e) => setNewObservations(e.target.value)}
+                                    className={`w-full px-4 py-3 rounded-lg border outline-none transition-all ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200'} ${(!hasPermission(PERMISSIONS_MASTER.TICKETS_RESOLVE) && !hasPermission(PERMISSIONS_MASTER.TICKETS_EDIT)) ? 'opacity-70 cursor-not-allowed grayscale-[0.5]' : 'focus:ring-2 focus:ring-red-500/20 hover:border-red-500/50'}`}
+                                    placeholder={(!hasPermission(PERMISSIONS_MASTER.TICKETS_RESOLVE) && !hasPermission(PERMISSIONS_MASTER.TICKETS_EDIT)) ? "Solo lectura" : "Detalles adicionales..."}
+                                />
                             </div>
                             <div className="flex gap-3 pt-6">
                                 <button type="button" onClick={closeModal} className={`flex-1 py-3 rounded-lg font-bold text-xs tracking-widest border transition-all ${darkMode ? 'border-slate-800 text-slate-400 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
