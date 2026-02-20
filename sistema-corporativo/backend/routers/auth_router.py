@@ -93,9 +93,11 @@ async def register(user_data: UserRegister, conn = Depends(get_db_connection)):
 @router.post("/login")
 async def login(login_data: UserLogin, conn = Depends(get_db_connection)):
     query = """
-        SELECT p.id, p.username, p.password_hash, p.email, r.nombre_rol, p.tenant_id
+        SELECT p.id, p.username, p.nombre, p.apellido, p.password_hash, p.email, 
+               p.rol_id, r.nombre_rol, p.tenant_id, p.gerencia_id, g.nombre as gerencia_nombre
         FROM profiles p
         LEFT JOIN roles r ON p.rol_id = r.id
+        LEFT JOIN gerencias g ON p.gerencia_id = g.id
         WHERE (p.email = $1 OR p.username = $1) AND p.estado = TRUE
     """
     identifier = login_data.email or login_data.username
@@ -111,7 +113,8 @@ async def login(login_data: UserLogin, conn = Depends(get_db_connection)):
         data={
             "sub": str(user['id']), 
             "role": user['nombre_rol'],
-            "tenant_id": str(user['tenant_id']) if user['tenant_id'] else None
+            "tenant_id": str(user['tenant_id']) if user['tenant_id'] else None,
+            "gerencia_id": user['gerencia_id']
         }
     )
     
@@ -124,7 +127,12 @@ async def login(login_data: UserLogin, conn = Depends(get_db_connection)):
         "user": {
             "id": str(user['id']),
             "username": user['username'],
-            "role": user['nombre_rol']
+            "nombre": user['nombre'],
+            "apellido": user['apellido'],
+            "email": user['email'],
+            "role": user['nombre_rol'],
+            "gerencia_id": user['gerencia_id'],
+            "gerencia_depto": user['gerencia_nombre']
         }
     }
 
