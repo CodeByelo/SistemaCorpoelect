@@ -1,200 +1,290 @@
 "use client";
 
-import React, { createContext, useState, useEffect, ReactNode, useContext } from 'react';
-import { DEFAULT_SCOPES, PERMISSIONS_MASTER } from '@/permissions/constants';
+import React, {
+  createContext,
+  useState,
+  useEffect,
+  ReactNode,
+  useContext,
+} from "react";
+import { DEFAULT_SCOPES, PERMISSIONS_MASTER } from "@/permissions/constants";
 
-export type UserRole = 'CEO' | 'Administrativo' | 'Usuario' | 'Desarrollador';
+export type UserRole = "CEO" | "Administrativo" | "Usuario" | "Desarrollador";
 
 export interface User {
-    id: number;
-    username: string;
-    nombre: string;
-    apellido: string;
-    email_corp: string;
-    gerencia_depto: string;
-    role: UserRole;
-    roleOriginal?: UserRole;
-    permissions: string[];
+  id: string;
+  username: string;
+  nombre: string;
+  apellido: string;
+  email_corp: string;
+  gerencia_depto: string;
+  gerencia_id?: number;
+  role: UserRole;
+  roleOriginal?: UserRole;
+  permissions: string[];
 }
 
 export interface AuthContextType {
-    user: User | null;
-    isLoading: boolean;
-    isAuthenticated: boolean;
-    login: (username: string, password: string) => Promise<boolean>;
-    logout: () => void;
-    setUser: (user: User | null) => void;
-    switchRole: (newRole: UserRole) => Promise<boolean>;
-    hasPermission: (permission: string) => boolean;
+  user: User | null;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+  login: (username: string, password: string) => Promise<boolean>;
+  devLogin: () => Promise<boolean>;
+  logout: () => void;
+  setUser: (user: User | null) => void;
+  switchRole: (newRole: UserRole) => Promise<boolean>;
+  hasPermission: (permission: string) => boolean;
 }
 
-export const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(
+  undefined,
+);
 
 interface AuthProviderProps {
-    children: ReactNode;
+  children: ReactNode;
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-    const [user, setUser] = useState<User | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [isClient, setIsClient] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isClient, setIsClient] = useState(false);
 
-    // ✅ HELPER PARA OBTENER PERMISOS REALES (Persistencia Dev)
-    const getEffectivePermissions = (role: UserRole, basePermissions?: string[]): string[] => {
-        // ✅ REGLA MAESTRA: Desarrollador siempre tiene TODO
-        if (role === 'Desarrollador') return Object.values(PERMISSIONS_MASTER);
+  // Helper para obtener permisos según el rol
+  const getEffectivePermissions = (
+    role: UserRole,
+    basePermissions?: string[],
+  ): string[] => {
+    if (role === "Desarrollador") return Object.values(PERMISSIONS_MASTER);
 
-        if (typeof window === 'undefined') return (basePermissions && basePermissions.length > 0) ? basePermissions : DEFAULT_SCOPES[role] || [];
+    if (typeof window === "undefined") {
+      return basePermissions && basePermissions.length > 0
+        ? basePermissions
+        : DEFAULT_SCOPES[role] || [];
+    }
 
-        // Si es Administrativo, priorizar lo que el DEV guardó en localStorage
-        if (role === 'Administrativo') {
-            const savedScope = localStorage.getItem('admin_scope_2026');
-            if (savedScope) {
-                try {
-                    return JSON.parse(savedScope);
-                } catch (e) {
-                    console.error("Error parsing admin_scope_2026", e);
-                }
-            }
+    if (role === "Administrativo") {
+      const savedScope = localStorage.getItem("admin_scope_2026");
+      if (savedScope) {
+        try {
+          return JSON.parse(savedScope);
+        } catch (e) {
+          console.error("Error parsing admin_scope_2026", e);
         }
+      }
+    }
 
-        return (basePermissions && basePermissions.length > 0) ? basePermissions : DEFAULT_SCOPES[role] || [];
-    };
+    return basePermissions && basePermissions.length > 0
+      ? basePermissions
+      : DEFAULT_SCOPES[role] || [];
+  };
 
-    // Mark that we're on the client
-    useEffect(() => {
-        setIsClient(true);
-    }, []);
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
-    // Check for existing session on mount (ONLY on client)
-    useEffect(() => {
-        if (!isClient) return;
+  // Verificar sesión al montar el componente
+  useEffect(() => {
+    if (!isClient) return;
 
-        const checkSession = async () => {
-            try {
-                const response = await fetch('/api/auth/session');
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.user) {
-                        const userWithPerms = {
-                            ...data.user,
-                            permissions: getEffectivePermissions(data.user.role as UserRole, data.user.permissions)
-                        };
-                        setUser(userWithPerms);
-                    }
-                }
-            } catch (error) {
-                console.error('Session check failed:', error);
-            } finally {
-                setIsLoading(false);
-            }
+    const checkSession = async () => {
+      // 1. Check Dev Bypass
+      const devToken = localStorage.getItem("sgd_token");
+      if (devToken === "dev-bypass-token-2026") {
+        const devUser: User = {
+          id: "dev-001",
+          username: "dev_admin",
+          nombre: "Desarrollador",
+          apellido: "System",
+          email_corp: "dev@corpoelec.ind",
+          gerencia_depto: "Tecnología",
+          role: "Desarrollador",
+          permissions: Object.values(PERMISSIONS_MASTER),
         };
+        setUser(devUser);
+        setIsLoading(false);
+        return;
+      }
 
-        checkSession();
-    }, [isClient]);
+      // 2. Check Normal Session
+      const token = localStorage.getItem("sgd_token");
+      const storedUser = localStorage.getItem("sgd_user");
 
-    const login = async (username: string, password: string): Promise<boolean> => {
-        try {
-            const formData = new FormData();
-            formData.append('username', username);
-            formData.append('password', password);
-
-            const response = await fetch('/api/auth/login', {
-                method: 'POST',
-                body: formData,
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                if (data.user) {
-                    const userWithPerms = {
-                        ...data.user,
-                        permissions: getEffectivePermissions(data.user.role as UserRole, data.user.permissions)
-                    };
-                    localStorage.setItem('sgd_token', data.access_token);
-                    setUser(userWithPerms);
-                    return true;
-                }
-            } else {
-                const errorData = await response.json().catch(() => ({}));
-            }
-            return false;
-        } catch (error) {
-            return false;
+      if (token && storedUser) {
+        // ✅ RE-SINCRO COOKIE: Si el middleware la borró pero tenemos el token, la restauramos
+        if (!document.cookie.includes('session=')) {
+          document.cookie = `session=${token}; path=/; max-age=86400; SameSite=Lax`;
         }
-    };
-
-    const logout = () => {
-        // Clear client-side state
-        setUser(null);
-
-        // Clear server-side cookie
-        fetch('/api/auth/logout', { method: 'POST' })
-            .then(() => {
-                // Redirect to login
-                window.location.href = '/login';
-            })
-            .catch(error => {
-                console.error('Logout failed:', error);
-                // Force redirect anyway
-                window.location.href = '/login';
-            });
-    };
-
-    const switchRole = async (newRole: UserRole): Promise<boolean> => {
-        if (!user) return false;
 
         try {
-            const response = await fetch('/api/auth/switch-role', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ role: newRole }),
-            });
-
-            if (response.ok) {
-                let newNombre = user.nombre;
-                let newApellido = user.apellido;
-                const originalRole = user.roleOriginal || user.role;
-
-                // Sync name with role for clarity in Dev Switcher
-                if (newRole === 'CEO') { newNombre = 'Director'; newApellido = 'Ejecutivo'; }
-                else if (newRole === 'Administrativo') { newNombre = 'Administrador'; newApellido = 'General'; }
-                else if (newRole === 'Usuario') { newNombre = 'Operador'; newApellido = 'Estándar'; }
-                else if (newRole === 'Desarrollador') { newNombre = 'Desarrollador'; newApellido = 'Principal'; }
-
-                setUser({
-                    ...user,
-                    role: newRole,
-                    roleOriginal: originalRole,
-                    nombre: newNombre,
-                    apellido: newApellido,
-                    permissions: getEffectivePermissions(newRole)
-                });
-                return true;
-            }
-            return false;
-        } catch (error) {
-            console.error('Switch role failed:', error);
-            return false;
+          const parsedUser = JSON.parse(storedUser);
+          const userWithPerms = {
+            ...parsedUser,
+            permissions: getEffectivePermissions(
+              parsedUser.role as UserRole,
+              parsedUser.role as UserRole === user?.role ? user?.permissions : undefined
+            ),
+          };
+          setUser(userWithPerms);
+        } catch (e) {
+          console.error("Error parsing stored user", e);
+          localStorage.removeItem("sgd_user");
+          localStorage.removeItem("sgd_token");
         }
+      }
+
+      setIsLoading(false);
     };
 
-    const hasPermission = (permission: string): boolean => {
-        if (!user) return false;
-        if (user.role === 'Desarrollador') return true;
-        return user.permissions?.includes(permission) || false;
+    checkSession();
+  }, [isClient]);
+
+  // ✅ FUNCIÓN LOGIN CORREGIDA (Sin errores de tipo)
+  const login = async (username: string, password: string): Promise<boolean> => {
+    try {
+      setIsLoading(true);
+
+      const params = new URLSearchParams();
+      params.append('username', username);
+      params.append('password', password);
+
+      const response = await fetch('http://localhost:8000/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params.toString(),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Credenciales incorrectas');
+      }
+
+      const data = await response.json();
+      const backendUser = data.user;
+
+      // Guardar token
+      localStorage.setItem("sgd_token", data.access_token);
+
+      // ✅ Sincronizar con Middleware (Cookie de sesión)
+      // Usamos una configuración robusta para evitar que se pierda en la redirección
+      document.cookie = `session=${data.access_token}; path=/; max-age=86400; SameSite=Lax`;
+
+      // Construir objeto User
+      const newUser: User = {
+        id: backendUser.id,
+        username: backendUser.username,
+        nombre: backendUser.nombre,
+        apellido: backendUser.apellido || '',
+        email_corp: backendUser.email || `${backendUser.username}@corpoelec.com`,
+        gerencia_depto: backendUser.gerencia_depto || 'General',
+        gerencia_id: backendUser.gerencia_id,
+        role: backendUser.role as UserRole,
+        permissions: getEffectivePermissions(backendUser.role as UserRole),
+      };
+
+      // Guardar usuario en localStorage
+      localStorage.setItem("sgd_user", JSON.stringify(newUser));
+      setUser(newUser);
+
+      return true; // ← ÉXITO
+
+    } catch (error: any) {
+      console.error('Login error:', error);
+      alert(error.message || 'Error de conexión con el servidor');
+      return false; // ← ERROR
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // ✅ FUNCIÓN DEV LOGIN CORREGIDA
+  const devLogin = async (): Promise<boolean> => {
+    try {
+      const devUser: User = {
+        id: "dev-001",
+        username: "dev_admin",
+        nombre: "Desarrollador",
+        apellido: "System",
+        email_corp: "dev@corpoelec.ind",
+        gerencia_depto: "Tecnología",
+        role: "Desarrollador",
+        permissions: Object.values(PERMISSIONS_MASTER),
+      };
+
+      await new Promise((resolve) => setTimeout(resolve, 800));
+
+      localStorage.setItem("sgd_token", "dev-bypass-token-2026");
+      document.cookie = "session=dev-bypass-token-2026; path=/; max-age=86400; SameSite=Lax";
+
+      setUser(devUser);
+      return true; // ← ÉXITO
+
+    } catch (error) {
+      console.error("Dev login failed", error);
+      return false; // ← ERROR
+    }
+  };
+
+  const logout = () => {
+    setUser(null);
+    localStorage.removeItem("sgd_token");
+    localStorage.removeItem("sgd_user");
+    document.cookie = "session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    window.location.href = "/login";
+  };
+
+  const switchRole = async (newRole: UserRole): Promise<boolean> => {
+    if (!user) return false;
+
+    let newNombre = user.nombre;
+    let newApellido = user.apellido;
+
+    if (newRole === "CEO") {
+      newNombre = "Director";
+      newApellido = "Ejecutivo";
+    } else if (newRole === "Administrativo") {
+      newNombre = "Administrador";
+      newApellido = "General";
+    } else if (newRole === "Usuario") {
+      newNombre = "Operador";
+      newApellido = "Estándar";
+    } else if (newRole === "Desarrollador") {
+      newNombre = "Desarrollador";
+      newApellido = "Principal";
+    }
+
+    const updatedUser: User = {
+      ...user,
+      role: newRole,
+      roleOriginal: user.roleOriginal || user.role,
+      nombre: newNombre,
+      apellido: newApellido,
+      permissions: getEffectivePermissions(newRole),
     };
 
-    const value: AuthContextType = {
-        user,
-        isLoading,
-        isAuthenticated: !!user,
-        login,
-        logout,
-        setUser,
-        switchRole,
-        hasPermission
-    };
+    setUser(updatedUser);
+    localStorage.setItem("sgd_user", JSON.stringify(updatedUser));
+    return true;
+  };
 
-    return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  const hasPermission = (permission: string): boolean => {
+    if (!user) return false;
+    if (user.role === "Desarrollador") return true;
+    return user.permissions?.includes(permission) || false;
+  };
+
+  const value: AuthContextType = {
+    user,
+    isLoading,
+    isAuthenticated: !!user,
+    login,
+    devLogin,
+    logout,
+    setUser,
+    switchRole,
+    hasPermission,
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

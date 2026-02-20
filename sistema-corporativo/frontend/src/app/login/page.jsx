@@ -340,10 +340,19 @@ const LoginCorpoelecForm = () => {
   const formRef = useRef(null);
   const router = useRouter();
 
-  // ✅ AUTH HOOK COMENTADO - Usaremos API directa
-  // const { login: authLogin } = useAuth();
+  // ✅ USAR HOOK DE AUTH
+  const { login: authLogin, devLogin, isAuthenticated } = useAuth();
 
-  // ✅ Redirección después de login exitoso
+  // ✅ Redirección automática si ya está autenticado
+  useEffect(() => {
+    // Solo redirigir si existe la cookie que el middleware necesita
+    const hasSessionCookie = document.cookie.includes('session=');
+    if (isAuthenticated && hasSessionCookie && !loginSuccess) {
+      router.push('/dashboard');
+    }
+  }, [isAuthenticated, loginSuccess, router]);
+
+  // ✅ Redirección después de login exitoso (con delay para efecto visual)
   useEffect(() => {
     if (loginSuccess) {
       const timer = setTimeout(() => {
@@ -382,9 +391,6 @@ const LoginCorpoelecForm = () => {
     return Object.keys(newErrors).length === 0;
   }, [formData]);
 
-  // ✅ USAR HOOK DE AUTH
-  const { login: authLogin } = useAuth();
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) {
@@ -422,6 +428,17 @@ const LoginCorpoelecForm = () => {
     } catch (error) {
       console.error('Error en flujo de autenticación:', error);
       setLoginError('Error inesperado de conexión');
+      setIsLoading(false);
+    }
+  };
+
+  const handleDevLogin = async () => {
+    setIsLoading(true);
+    const success = await devLogin();
+    if (success) {
+      setLoginSuccess(true);
+    } else {
+      setLoginError('Error en modo developer');
       setIsLoading(false);
     }
   };
@@ -499,6 +516,15 @@ const LoginCorpoelecForm = () => {
               <Lock size={14} />
               Sistema de Gestión Empresarial
             </p>
+
+            {/* BOTÓN OVERLAY PARA DEV (Visible solo en hover o discreto) */}
+            <button
+              type="button"
+              onClick={handleDevLogin}
+              className="mt-2 text-[10px] text-gray-600 hover:text-red-400 transition-colors uppercase tracking-widest opacity-50 hover:opacity-100"
+            >
+              [DEV_ACCESS_V1]
+            </button>
           </div>
 
           <div className="px-8 pb-8 pt-4">

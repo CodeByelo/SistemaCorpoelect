@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-psycopg2-binary
+asyncpg
 python-jose[cryptography]
 passlib[bcrypt]
 python-dotenv
@@ -8,3 +8,7 @@ python-multipart
 pydantic
 pydantic-settings
 email-validator
+supabase==2.5.0
+httpx
+arq
+redis

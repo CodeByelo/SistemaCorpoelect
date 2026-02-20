@@ -14,13 +14,15 @@ export async function POST(request: Request) {
         }
 
         // Proxy to Python Backend
-        const formData = new FormData();
-        formData.append('username', username as string);
-        formData.append('password', password as string);
-
-        const response = await fetch(`${API_BASE_URL}/token`, {
+        const response = await fetch(`${API_BASE_URL}/auth/login`, {
             method: 'POST',
-            body: formData,
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                username: username as string,
+                password: password as string,
+            }),
         });
 
         const data = await response.json();

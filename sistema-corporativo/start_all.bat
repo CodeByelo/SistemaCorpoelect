@@ -1,20 +1,26 @@
 @echo off
 echo ===================================================
-echo   Iniciando Sistema Corporativo Completo
+echo   Iniciando Sistema Alpha V.0.2 - PROJECT REAL
 echo ===================================================
 
-echo Iniciando Backend (invocando script de configuracion)...
-:: Usamos run_backend.bat porque ya contiene la lógica de validación de venv
-start "Backend API" run_backend.bat
+echo [1/2] Iniciando Backend Enterprise (FastAPI)...
+:: Ejecutamos run_backend.bat que ya gestiona el entorno virtual
+start "ALPHA BACKEND" run_backend.bat
 
-echo Iniciando Frontend (Next.js)...
+echo [2/2] Iniciando Frontend Oficial (Next.js)...
 cd frontend
-start "Frontend App" cmd /k "npm run dev"
+:: Abrimos el frontend en una nueva ventana entrando a su carpeta
+start "ALPHA FRONTEND" cmd /k "npm run dev"
+cd ..
 
 echo.
 echo ===================================================
-echo   Sistemas iniciados.
-echo   - Backend: http://localhost:8000 (Ventana separada)
-echo   - Frontend: http://localhost:3000 (Ventana separada)
+echo   Sistemas iniciados correctamente.
+echo   - Backend: http://localhost:8000
+echo   - Frontend: http://localhost:3000
+
+echo ----------------- JJD -----------------------------
+
 echo ===================================================
+echo [INFO] Espera unos segundos a que Next.js compile...
 pause

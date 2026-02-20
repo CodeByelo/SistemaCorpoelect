@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Shield, Activity, Users, Lock, ChevronRight, ChevronLeft, Search, Download, Filter, FileText, Edit2, Trash2, Plus, Briefcase, Zap, Factory, Save, X, CheckCircle } from 'lucide-react';
-import { getAllUsers } from '@/lib/api';
+import { getAllUsers, updateUserRole } from '@/lib/api';
 import { PERMISSIONS_MASTER, DEFAULT_SCOPES, PERMISSION_LABELS } from '@/permissions/constants';
 import { useAuth } from '@/hooks/useAuth';
 import { UserRole } from '@/context/AuthContext';
@@ -736,14 +736,29 @@ function UserPermissionsModal({ user, onClose, darkMode, currentUserPerms }: { u
         setSaved(false);
     };
 
-    const handleSave = () => {
-        // En un entorno real, persiste en DB
-        setSaved(true);
-        setTimeout(() => {
-            setSaved(false);
-            onClose();
-        }, 1500);
-        alert(`Permisos actualizados para ${user.nombre}. (Regla 2: Solo se asignaron permisos permitidos por el AdminScope).`);
+    const [selectedRole, setSelectedRole] = useState(user.role || 'Usuario'); // Roles: 'Usuario', 'Administrativo', 'CEO', 'Desarrollador'
+    const roles = ['Usuario', 'Administrativo', 'CEO', 'Desarrollador'];
+
+    const handleSave = async () => {
+        try {
+            // Actualizar Rol
+            let rolId = 3; // Usuario
+            if (selectedRole === 'Administrativo') rolId = 2;
+            if (selectedRole === 'CEO') rolId = 1;
+            if (selectedRole === 'Desarrollador') rolId = 4;
+
+            await updateUserRole(user.id, rolId);
+
+            // En un entorno real, persiste en DB (Permisos Mock por ahora)
+            setSaved(true);
+            setTimeout(() => {
+                setSaved(false);
+                onClose();
+            }, 1500);
+            alert(`Permisos y Rol actualizados para ${user.nombre}.`);
+        } catch (error) {
+            alert("Error al actualizar: " + error);
+        }
     };
 
     return (
@@ -762,7 +777,25 @@ function UserPermissionsModal({ user, onClose, darkMode, currentUserPerms }: { u
                     <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition-colors"><X size={20} /></button>
                 </div>
 
-                <div className="p-6 max-h-[60vh] overflow-y-auto no-scrollbar">
+                <div className="p-6 max-h-[60vh] overflow-y-auto no-scrollbar space-y-6">
+                    {/* SECCIÓN DE ROL */}
+                    <div className={`p-4 rounded-xl border ${darkMode ? 'bg-zinc-950/50 border-zinc-800' : 'bg-slate-50 border-slate-100'}`}>
+                        <h4 className={`text-xs font-bold uppercase mb-3 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>Rol del Usuario</h4>
+                        <div className="flex gap-2">
+                            {roles.map(role => (
+                                <button
+                                    key={role}
+                                    onClick={() => setSelectedRole(role)}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedRole === role
+                                            ? 'bg-red-600 text-white shadow-lg shadow-red-900/40'
+                                            : (darkMode ? 'bg-zinc-800 text-slate-400 hover:bg-zinc-700' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100')
+                                        }`}
+                                >
+                                    {role}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {availablePermissions.length > 0 ? (
                             availablePermissions.map(perm => (

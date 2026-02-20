@@ -45,6 +45,7 @@ export const config = {
          * - _next/image (image optimization files)
          * - favicon.ico (favicon file)
          */
+        '/dashboard',
         '/dashboard/:path*',
         '/gerencias/:path*'
     ]
