@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+asyncpg
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
+python-multipart
+pydantic
+pydantic-settings
+email-validator
+supabase==2.5.0
+httpx
+arq
+redis
+psycopg2-binary

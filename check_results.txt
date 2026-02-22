@@ -1,0 +1,9 @@
+--- DATABASE SCHEMA REPORT ---
+profiles.id: uuid
+documentos.id: uuid
+tickets.id: integer
+logs_seguridad.usuario_id: uuid
+documento_ocultos.documento_id: COLUMN NOT FOUND
+documento_ocultos.user_id: COLUMN NOT FOUND
+
+Existing Tables: ['tickets', 'audit_logs', 'organizations', 'profiles', 'user_organizations', 'documentos', 'v_documentos_seguros', 'gerencias', 'logs_seguridad', 'documento_adjuntos', 'roles']

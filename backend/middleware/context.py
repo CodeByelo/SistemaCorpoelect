@@ -1,0 +1,46 @@
+from contextvars import ContextVar
+from fastapi import Request
+from jose import jwt
+import os
+import logging
+
+logger = logging.getLogger("sistema_corporativo")
+
+# Contextvars
+tenant_id_var: ContextVar[str] = ContextVar("tenant_id", default=None)
+user_id_var: ContextVar[str] = ContextVar("user_id", default=None)
+trace_id_var: ContextVar[str] = ContextVar("trace_id", default=None)
+
+def get_current_tenant_id():
+    return tenant_id_var.get()
+
+def get_current_user_id():
+    return user_id_var.get()
+
+def get_current_trace_id():
+    return trace_id_var.get()
+
+async def extract_user_from_token(request: Request):
+    """
+    Función de extracción robusta para asegurar que el tenant_id 
+    llegue al contexto de sesión de la base de datos.
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        # Soporte para bypass de desarrollo si es necesario
+        if auth_header == "Bearer dev-bypass-token-2026":
+            return "00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000001"
+        return None, None
+    
+    token = auth_header.split(" ")[1]
+    # Sincronizado con auth/security.py
+    secret_key = os.getenv("JWT_SECRET", "tu_clave_secreta_muy_segura_cambiala_en_produccion")
+    
+    try:
+        payload = jwt.decode(token, secret_key, algorithms=["HS256"])
+        user_id = payload.get("sub")
+        logger.info(f"🔑 user_id extraído: {user_id}")
+        return user_id, payload.get("tenant_id")
+    except Exception as e:
+        logger.error(f"Error decodificando JWT: {e}")
+        return None, None

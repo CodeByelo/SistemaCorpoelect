@@ -1,0 +1,41 @@
+--- DATABASE DETAILED AUDIT ---
+
+[logs_seguridad] Columns:
+  - id: integer
+  - usuario_id: uuid
+  - evento: character varying
+  - nivel: character varying
+  - ip_origen: character varying
+  - fecha_registro: timestamp with time zone
+
+[documento_ocultos] Columns:
+  (Table not found or no columns)
+
+[documentos] Columns:
+  - id: uuid
+  - tenant_id: uuid
+  - user_id: uuid
+  - title: character varying
+  - content: text
+  - created_at: timestamp with time zone
+  - updated_at: timestamp with time zone
+  - titulo: text
+  - correlativo: text
+  - tipo_documento: text
+  - estado: text
+  - prioridad: text
+  - remitente_id: uuid
+  - receptor_id: uuid
+  - receptor_gerencia_id: integer
+  - url_archivo: text
+  - fecha_creacion: timestamp with time zone
+  - fecha_caducidad: timestamp with time zone
+  - fecha_ultima_actividad: timestamp with time zone
+  - file_size_bytes: bigint
+  - file_hash: text
+  - storage_path: text
+  - contenido: text
+  - leido: boolean
+
+Testing simple logs_seguridad query...
+  Count: 11
