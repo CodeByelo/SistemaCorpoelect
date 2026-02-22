@@ -12,6 +12,8 @@ import {
   FileText,
   Tag,
   Activity,
+  Trash2,
+  X,
 } from "lucide-react";
 import { logTicketActivity } from "@/app/dashboard/security/actions";
 import { UserRole } from "@/context/AuthContext";
@@ -61,7 +63,6 @@ export default function TicketSystem({
   currentUserId?: string;
   refreshTickets?: () => void;
 }) {
-  // Import inside if possible or via constants
   const PERMISSIONS_MASTER = {
     TICKETS_CREATE: "TICKETS_CREATE",
     TICKETS_EDIT: "TICKETS_EDIT",
@@ -76,28 +77,17 @@ export default function TicketSystem({
   const [filterPriority, setFilterPriority] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
 
-  // Modal State
   const [showModal, setShowModal] = useState(false);
   const [editingTicket, setEditingTicket] = useState<Ticket | null>(null);
 
-  // Form State
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newArea, setNewArea] = useState(userDept || TECH_DEPT);
   const [newPriority, setNewPriority] = useState<TicketPriority>("MEDIA");
   const [newObservations, setNewObservations] = useState("");
 
-  // Menu Contextual State
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
 
-  const handleClickOutside = () => setActiveMenu(null);
-
-  useEffect(() => {
-    document.addEventListener("click", handleClickOutside);
-    return () => document.removeEventListener("click", handleClickOutside);
-  }, []);
-
-  // Helper for logging
   const logAction = async (
     action: string,
     ticketTitle: string,
@@ -116,7 +106,6 @@ export default function TicketSystem({
     }
   };
 
-  // Handle Edit Start
   const startEdit = (e: React.MouseEvent, ticket: Ticket) => {
     e.stopPropagation();
     setEditingTicket(ticket);
@@ -129,7 +118,6 @@ export default function TicketSystem({
     setActiveMenu(null);
   };
 
-  // Handle Delete
   const deleteTicket = async (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
     if (confirm("¿Estás seguro de eliminar este ticket permanentemente?")) {
@@ -153,7 +141,6 @@ export default function TicketSystem({
     }
   };
 
-  // Filter Logic
   const filteredTickets = useMemo(() => {
     return tickets.filter((t) => {
       const matchesSearch =
@@ -208,7 +195,6 @@ export default function TicketSystem({
     }
   };
 
-  // Drag & Drop
   const handleDragStart = (e: React.DragEvent, id: number) => {
     if (!hasPermission(PERMISSIONS_MASTER.TICKETS_MOVE_KANBAN)) return;
     e.dataTransfer.setData("ticketId", id.toString());
@@ -226,7 +212,6 @@ export default function TicketSystem({
 
     try {
       if (editingTicket) {
-        // Update existing
         await updateTicket(editingTicket.id, {
           title: newTitle,
           description: newDesc,
@@ -236,7 +221,6 @@ export default function TicketSystem({
         });
         logAction("EDICIÓN", newTitle, "info");
       } else {
-        // Check for user limit (3 active tickets)
         const activeTickets = tickets.filter(
           (t) =>
             t.owner === currentUser &&
@@ -250,7 +234,6 @@ export default function TicketSystem({
           return;
         }
 
-        // Create new
         if (!currentUserId) {
           alert("Error: No se pudo identificar al usuario actual.");
           return;
@@ -327,7 +310,7 @@ export default function TicketSystem({
 
     return (
       <div
-        className={`flex-1 min-w-[320px] rounded-2xl border ${darkMode ? "bg-zinc-900/40 border-zinc-800/50" : "bg-slate-50 border-slate-200"} flex flex-col`}
+        className={`min-w-[320px] w-full rounded-2xl border ${darkMode ? "bg-zinc-900/40 border-zinc-800/50" : "bg-slate-50 border-slate-200"} flex flex-col self-start`}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => handleDrop(e, status)}
       >
@@ -351,7 +334,7 @@ export default function TicketSystem({
           </div>
         </div>
 
-        <div className="p-4 pb-20 flex-1 space-y-4 overflow-y-auto max-h-[calc(100vh-400px)] lg:max-h-[calc(100vh-350px)] scrollbar-thin">
+        <div className="p-4 pb-6 space-y-4">
           {statusTickets.map((ticket) => (
             <div
               key={ticket.id}
@@ -369,44 +352,55 @@ export default function TicketSystem({
                 >
                   {ticket.priority}
                 </span>
-                <div className="relative">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setActiveMenu(
-                        activeMenu === ticket.id ? null : ticket.id,
-                      );
-                    }}
-                    className={`p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity ${darkMode ? "hover:bg-zinc-800" : "hover:bg-slate-100"}`}
-                  >
-                    <MoreVertical
-                      size={14}
-                      className={darkMode ? "text-zinc-400" : "text-slate-400"}
-                    />
-                  </button>
+                
 
-                  {activeMenu === ticket.id && (
-                    <div
-                      onClick={(e) => e.stopPropagation()}
-                      className={`absolute right-0 mt-1 w-40 z-20 rounded-xl border shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 ${darkMode ? "bg-zinc-900 border-zinc-800 shadow-black" : "bg-white border-slate-200 shadow-slate-200"}`}
-                    >
-                      <button
-                        onClick={(e) => startEdit(e, ticket)}
-                        className={`w-full px-4 py-2.5 text-left text-xs font-medium flex items-center gap-2 ${darkMode ? "hover:bg-zinc-800 text-zinc-300" : "hover:bg-slate-50 text-slate-700"}`}
-                      >
-                        <FileText size={14} /> Editar Detalles
-                      </button>
-                      {hasPermission(PERMISSIONS_MASTER.TICKETS_DELETE) && (
-                        <button
-                          onClick={(e) => deleteTicket(e, ticket.id)}
-                          className={`w-full px-4 py-2.5 text-left text-xs font-medium flex items-center gap-2 text-red-500 ${darkMode ? "hover:bg-red-500/10" : "hover:bg-red-50"}`}
-                        >
-                          <Trash2 size={14} /> Eliminar Ticket
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
+<div className="relative">
+  {activeMenu === ticket.id && (
+    <div
+      className="fixed inset-0 z-40"
+      onClick={() => setActiveMenu(null)}
+    />
+  )}
+  <button
+    onClick={() => setActiveMenu(activeMenu === ticket.id ? null : ticket.id)}
+    className={`p-1.5 rounded-lg transition-all ${
+      darkMode
+        ? "hover:bg-zinc-700 text-zinc-400"
+        : "hover:bg-slate-200 text-slate-500"
+    }`}
+  >
+    <MoreVertical size={16} />
+  </button>
+  {activeMenu === ticket.id && (
+    <div
+      className={`absolute right-0 top-full mt-1 w-44 rounded-lg border shadow-xl z-50 overflow-hidden ${
+        darkMode
+          ? "bg-zinc-900 border-zinc-700 shadow-black"
+          : "bg-white border-slate-200 shadow-lg"
+      }`}
+    >
+      <button
+        onClick={() => { setActiveMenu(null); startEdit({ stopPropagation: () => {} } as any, ticket); }}
+        className={`w-full px-4 py-2.5 text-left text-xs font-medium flex items-center gap-2 ${
+          darkMode ? "hover:bg-zinc-800 text-zinc-300" : "hover:bg-slate-50 text-slate-700"
+        }`}
+      >
+        <FileText size={14} /> Editar
+      </button>
+      {hasPermission(PERMISSIONS_MASTER.TICKETS_DELETE) && (
+        <button
+          onClick={() => { setActiveMenu(null); deleteTicket({ stopPropagation: () => {} } as any, ticket.id); }}
+          className={`w-full px-4 py-2.5 text-left text-xs font-medium flex items-center gap-2 ${
+            darkMode ? "hover:bg-red-500/20 text-red-400" : "hover:bg-red-50 text-red-600"
+          }`}
+        >
+          <Trash2 size={14} /> Eliminar
+        </button>
+      )}
+    </div>
+  )}
+</div>
+                {/* === FIN MENÚ CORREGIDO === */}
               </div>
 
               <h4
@@ -437,7 +431,6 @@ export default function TicketSystem({
                 </div>
               </div>
 
-              {/* Quick Actions for Admins/Techs */}
               <div className="flex gap-2 mt-3 pt-3 border-t border-inherit">
                 {ticket.status === "ABIERTO" && (userRole === "Administrativo" || userRole === "Desarrollador") && (
                   <button
@@ -475,7 +468,6 @@ export default function TicketSystem({
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-      {/* Header Content */}
       <div
         className={`p-6 rounded-2xl border ${darkMode ? "bg-zinc-900/50 border-zinc-800/50" : "bg-white border-slate-200"} shadow-sm`}
       >
@@ -592,8 +584,7 @@ export default function TicketSystem({
         </div>
       </div>
 
-      {/* Kanban Board */}
-      <div className="flex flex-col lg:flex-row gap-6 lg:h-[calc(100vh-300px)] lg:min-h-[500px]">
+      <div className="flex flex-col lg:flex-row gap-6 items-start">
         <StatusColumn
           status="ABIERTO"
           icon={Clock}
@@ -614,7 +605,6 @@ export default function TicketSystem({
         />
       </div>
 
-      {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
           <div
@@ -644,70 +634,32 @@ export default function TicketSystem({
             </div>
 
             <form onSubmit={handleSaveTicket} className="p-6 space-y-5">
-              {!editingTicket && (
-                <div className="space-y-2">
-                  <label
-                    className={`text-xs font-bold ${darkMode ? "text-zinc-400" : "text-slate-600"}`}
-                  >
-                    Asunto del Ticket
-                  </label>
-                  <input
-                    required
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    placeholder="Ej: Falla en servidor de correo, Solicitud de acceso..."
-                    className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-all ${darkMode ? "bg-zinc-900 border-zinc-800 text-white focus:border-red-500/50" : "bg-white border-slate-200 focus:border-red-500/50 focus:ring-4 focus:ring-red-500/5"}`}
-                  />
-                </div>
-              )}
+              <div className="space-y-2">
+                <label className={`text-xs font-bold ${darkMode ? "text-zinc-400" : "text-slate-600"}`}>
+                  Asunto del Ticket
+                </label>
+                <input
+                  required
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  placeholder="Ej: Falla en servidor de correo, Solicitud de acceso..."
+                  className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-all ${darkMode ? "bg-zinc-900 border-zinc-800 text-white focus:border-red-500/50" : "bg-white border-slate-200 focus:border-red-500/50 focus:ring-4 focus:ring-red-500/5"}`}
+                />
+              </div>
 
-              {!editingTicket ? (
-                <div className="space-y-2">
-                  <label
-                    className={`text-xs font-bold ${darkMode ? "text-zinc-400" : "text-slate-600"}`}
-                  >
-                    Descripción Detallada
-                  </label>
-                  <textarea
-                    required
-                    rows={4}
-                    value={newDesc}
-                    onChange={(e) => setNewDesc(e.target.value)}
-                    placeholder="Proporciona todos los detalles técnicos posibles..."
-                    className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-all resize-none ${darkMode ? "bg-zinc-900 border-zinc-800 text-white focus:border-red-500/50" : "bg-white border-slate-200 focus:border-red-500/50 focus:ring-4 focus:ring-red-500/5"}`}
-                  />
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="p-4 rounded-xl bg-zinc-500/5 border border-inherit">
-                    <p
-                      className={`text-xs font-bold mb-1 opacity-50 ${darkMode ? "text-zinc-400" : "text-slate-600"}`}
-                    >
-                      DESCRIPCIÓN ORIGINAL
-                    </p>
-                    <p
-                      className={`text-sm italic ${darkMode ? "text-zinc-300" : "text-slate-700"}`}
-                    >
-                      "{editingTicket.description}"
-                    </p>
-                  </div>
-                  
-                  {/* Option for Admins to edit description if needed */}
-                  {userRole !== "Usuario" && (
-                     <div className="space-y-2">
-                      <label className={`text-xs font-bold ${darkMode ? "text-zinc-400" : "text-slate-600"}`}>
-                        Corregir Descripción (Opcional)
-                      </label>
-                      <textarea
-                        rows={2}
-                        value={newDesc}
-                        onChange={(e) => setNewDesc(e.target.value)}
-                        className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-all resize-none ${darkMode ? "bg-zinc-900 border-zinc-800 text-white focus:border-red-500/50" : "bg-white border-slate-200 focus:border-red-500/50"}`}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
+              <div className="space-y-2">
+                <label className={`text-xs font-bold ${darkMode ? "text-zinc-400" : "text-slate-600"}`}>
+                  Descripción
+                </label>
+                <textarea
+                  required={!editingTicket}
+                  rows={4}
+                  value={newDesc}
+                  onChange={(e) => setNewDesc(e.target.value)}
+                  placeholder="Proporciona todos los detalles técnicos posibles..."
+                  className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-all resize-none ${darkMode ? "bg-zinc-900 border-zinc-800 text-white focus:border-red-500/50" : "bg-white border-slate-200 focus:border-red-500/50 focus:ring-4 focus:ring-red-500/5"}`}
+                />
+              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -824,35 +776,3 @@ export default function TicketSystem({
     </div>
   );
 }
-
-const Trash2 = ({ size, className }: { size?: number; className?: string }) => (
-  <svg
-    width={size || 24}
-    height={size || 24}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={className}
-  >
-    <path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6" />
-  </svg>
-);
-
-const X = ({ size, className }: { size?: number; className?: string }) => (
-  <svg
-    width={size || 24}
-    height={size || 24}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={className}
-  >
-    <path d="M18 6 6 18M6 6l12 12" />
-  </svg>
-);
