@@ -7,7 +7,7 @@ import React, {
   ReactNode,
   useContext,
 } from "react";
-import { DEFAULT_SCOPES, PERMISSIONS_MASTER } from "@/permissions/constants";
+import { DEFAULT_SCOPES, PERMISSIONS_MASTER } from "../permissions/constants";
 
 export type UserRole = "CEO" | "Administrativo" | "Usuario" | "Desarrollador";
 

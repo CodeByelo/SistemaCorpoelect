@@ -47,14 +47,14 @@ import {
 } from "lucide-react";
 
 // ✅ IMPORTA LOS COMPONENTES DEL BOT AL INICIO
-import BotButton from "@/components/BotButton";
-import ChatWindow from "@/components/ChatWindow";
-import TicketSystem, { Ticket } from "@/components/TicketSystem";
-import MasterPermissionPanel from "@/components/MasterPermissionPanel";
-import { logDocumentActivity } from "@/app/dashboard/security/actions";
+import BotButton from "../../components/BotButton";
+import ChatWindow from "../../components/ChatWindow";
+import TicketSystem, { Ticket } from "../../components/TicketSystem";
+import MasterPermissionPanel from "../../components/MasterPermissionPanel";
+import { logDocumentActivity } from "./security/actions";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/hooks/useAuth";
-import { UserRole, User } from "@/context/AuthContext";
+import { useAuth } from "../../hooks/useAuth";
+import { UserRole, User } from "../../context/AuthContext";
 import {
   PieChart,
   Pie,
@@ -68,12 +68,12 @@ import {
   YAxis,
   CartesianGrid,
 } from "recharts";
-import { useIdleTimer } from "@/hooks/useIdleTimer";
+import { useIdleTimer } from "../../hooks/useIdleTimer";
 import { DepartmentGrid } from "./components/DepartmentGrid";
 import { DepartmentDetailView } from "./components/DepartmentDetailView";
 import { OrgCategory, Document } from "./types";
-import { RoleGuard } from "@/components/RoleGuard";
-import { PERMISSIONS_MASTER } from "@/permissions/constants";
+import { RoleGuard } from "../../components/RoleGuard";
+import { PERMISSIONS_MASTER } from "../../permissions/constants";
 import {
   getDocumentos,
   uploadDocumento,
@@ -81,8 +81,8 @@ import {
   getAllUsers,
   getGerencias,
   markAsRead,
-} from "@/lib/api";
-import { ApiDocument, ApiUser } from "@/lib/api";
+} from "../../lib/api";
+import { ApiDocument, ApiUser } from "../../lib/api";
 
 // ==========================================
 // TIPOS Y INTERFACES
@@ -912,7 +912,7 @@ const PriorityMatrix: React.FC<{
   );
 };
 
-// Kanban Ticket System logic integrated from @/components/TicketSystem
+// Kanban Ticket System logic integrated from ../../components/TicketSystem
 
 const DocumentManager: React.FC<{
   darkMode: boolean;

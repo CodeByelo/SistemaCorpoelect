@@ -1,5 +1,5 @@
-import { AuthProvider } from "@/context/AuthContext";
-import { SecurityProtector } from "@/components/SecurityProtector";
+import { AuthProvider } from "../context/AuthContext";
+import { SecurityProtector } from "../components/SecurityProtector";
 
 export function Providers({ children }: { children: React.ReactNode }) {
     return (
